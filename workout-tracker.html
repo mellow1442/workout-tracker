@@ -329,22 +329,22 @@
 
   async function loadData() {
     try {
-      const res = await window.storage.get('workout-entries', false);
-      entries = res ? JSON.parse(res.value) : [];
+      const raw = localStorage.getItem('workout-entries');
+      entries = raw ? JSON.parse(raw) : [];
     } catch (e) { entries = []; }
     try {
-      const res = await window.storage.get('workout-prefs', false);
-      prefs = res ? JSON.parse(res.value) : { unit: 'kg' };
+      const raw = localStorage.getItem('workout-prefs');
+      prefs = raw ? JSON.parse(raw) : { unit: 'kg' };
     } catch (e) { prefs = { unit: 'kg' }; }
     dataReady = true;
   }
 
   async function saveEntries() {
-    try { await window.storage.set('workout-entries', JSON.stringify(entries), false); }
+    try { localStorage.setItem('workout-entries', JSON.stringify(entries)); }
     catch (e) { console.error('Failed to save entries', e); }
   }
   async function savePrefs() {
-    try { await window.storage.set('workout-prefs', JSON.stringify(prefs), false); }
+    try { localStorage.setItem('workout-prefs', JSON.stringify(prefs)); }
     catch (e) { console.error('Failed to save prefs', e); }
   }
 
