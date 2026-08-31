@@ -369,6 +369,122 @@
   let prefs = { unit: 'kg' };
   let openDay = null;
   let selectedExercise = null;
+  let restRemaining = 90;
+  let restRunning = false;
+  let restIntervalId = null;
+
+  const WORKOUT_PLANS = {
+    A: [
+      { name: 'Deadlift', weight: 115, unit: 'lbs', reps: 8, sets: 3 },
+      { name: 'Overhead Press', weight: 55, unit: 'lbs', reps: 10, sets: 3 },
+      { name: 'Seated Cable Row', weight: 75, unit: 'lbs', reps: 12, sets: 3 },
+      { name: 'Tricep Pushdown', weight: 25, unit: 'lbs', reps: 12, sets: 3 },
+      { name: 'Landmine Press', weight: null, unit: 'lbs', reps: null, sets: null }
+    ],
+    B: [
+      { name: 'Squat', weight: 105, unit: 'lbs', reps: 10, sets: 3 },
+      { name: 'Bench Press', weight: 85, unit: 'lbs', reps: 10, sets: 3 },
+      { name: 'Lat Pulldown', weight: 60, unit: 'lbs', reps: 12, sets: 3 },
+      { name: 'Face Pull', weight: 25, unit: 'lbs', reps: 15, sets: 3 },
+      { name: 'Cable Flyes', weight: 10, unit: 'lbs', reps: 12, sets: 3 }
+    ]
+  };
+
+  function planFor(exerciseName) {
+    for (const type of ['A', 'B']) {
+      const found = WORKOUT_PLANS[type].find(p => p.name.toLowerCase() === exerciseName.toLowerCase());
+      if (found) return found;
+    }
+    return null;
+  }
+
+  function lastSessionInfo() {
+    if (!entries.length) return null;
+    let lastDate = entries[0].date;
+    entries.forEach(e => { if (e.date > lastDate) lastDate = e.date; });
+    const namesLogged = new Set(entries.filter(e => e.date === lastDate).map(e => e.exercise.toLowerCase()));
+    const overlap = plan => plan.filter(p => namesLogged.has(p.name.toLowerCase())).length;
+    const scoreA = overlap(WORKOUT_PLANS.A), scoreB = overlap(WORKOUT_PLANS.B);
+    return { date: lastDate, type: scoreB > scoreA ? 'B' : 'A' };
+  }
+
+  function nextWorkout() {
+    const last = lastSessionInfo();
+    if (!last) return { type: 'A', date: todayStr() };
+    const [y, m, d] = last.date.split('-').map(Number);
+    const nd = new Date(y, m - 1, d + 2);
+    return { type: last.type === 'A' ? 'B' : 'A', date: localDateStr(nd) };
+  }
+
+  function formatUpcoming(dateStr) {
+    if (dateStr <= todayStr()) return 'Today';
+    const [y, m, d] = dateStr.split('-').map(Number);
+    const dt = new Date(y, m - 1, d);
+    return dt.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
+  }
+
+  function fillFromPlan(name, weight, reps, sets) {
+    const exEl = document.getElementById('f-exercise');
+    if (!exEl) return;
+    exEl.value = name;
+    if (weight != null) document.getElementById('f-weight').value = weight;
+    if (reps != null) document.getElementById('f-reps').value = reps;
+    if (sets != null) document.getElementById('f-sets').value = sets;
+    exEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
+  function formatTime(sec) {
+    const m = Math.floor(sec / 60), s = sec % 60;
+    return `${m}:${String(s).padStart(2, '0')}`;
+  }
+
+  function updateRestUI() {
+    const disp = document.getElementById('rest-display');
+    const btn = document.getElementById('rest-btn');
+    if (disp) disp.textContent = formatTime(restRemaining);
+    if (btn) btn.textContent = restRunning ? 'CANCEL' : 'START 1:30 REST';
+  }
+
+  function alertRestDone() {
+    try { if (navigator.vibrate) navigator.vibrate([250, 120, 250, 120, 250]); } catch (e) {}
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      [0, 0.35, 0.7].forEach(t => {
+        const osc = ctx.createOscillator(), gain = ctx.createGain();
+        osc.type = 'sine'; osc.frequency.value = 880;
+        osc.connect(gain); gain.connect(ctx.destination);
+        gain.gain.setValueAtTime(0.25, ctx.currentTime + t);
+        osc.start(ctx.currentTime + t);
+        osc.stop(ctx.currentTime + t + 0.25);
+      });
+    } catch (e) {}
+  }
+
+  function cancelRest() {
+    clearInterval(restIntervalId);
+    restRunning = false;
+    restRemaining = 90;
+    updateRestUI();
+  }
+
+  function startRest() {
+    if (restRunning) { cancelRest(); return; }
+    restRemaining = 90;
+    restRunning = true;
+    updateRestUI();
+    restIntervalId = setInterval(() => {
+      restRemaining--;
+      if (restRemaining <= 0) {
+        clearInterval(restIntervalId);
+        restRunning = false;
+        restRemaining = 0;
+        updateRestUI();
+        alertRestDone();
+      } else {
+        updateRestUI();
+      }
+    }, 1000);
+  }
   let session = null;
   let authMode = 'signin';
   let authError = '';
@@ -666,6 +782,51 @@
     });
     app.appendChild(rack);
 
+    // Rest timer
+    const restCard = el('div', 'card');
+    restCard.appendChild(el('h2', null, 'REST TIMER'));
+    const restRow = el('div');
+    restRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:14px;';
+    const restDisplay = el('div', null, formatTime(restRemaining));
+    restDisplay.id = 'rest-display';
+    restDisplay.style.cssText = "font-family:'Roboto Mono', monospace; font-size:28px; font-weight:700;";
+    const restBtn = el('button', 'log-btn', restRunning ? 'CANCEL' : 'START 1:30 REST');
+    restBtn.id = 'rest-btn';
+    restBtn.style.cssText = 'width:auto; flex:1; margin-top:0;';
+    restBtn.onclick = startRest;
+    restRow.appendChild(restDisplay);
+    restRow.appendChild(restBtn);
+    restCard.appendChild(restRow);
+    app.appendChild(restCard);
+
+    // Next workout
+    const nextCard = el('div', 'card');
+    nextCard.appendChild(el('h2', null, 'NEXT WORKOUT'));
+    const nw = nextWorkout();
+    const nwTitle = el('div', 'entry-ex', `Workout ${nw.type} · ${formatUpcoming(nw.date)}`);
+    nwTitle.style.fontSize = '17px';
+    nwTitle.style.marginBottom = '10px';
+    nextCard.appendChild(nwTitle);
+    WORKOUT_PLANS[nw.type].forEach(p => {
+      const matches = entries.filter(e => e.exercise.toLowerCase() === p.name.toLowerCase()).sort((a, b) => b.ts - a.ts);
+      const last = matches[0];
+      const targetStr = p.weight != null ? `Target: ${p.weight} ${p.unit} × ${p.reps} × ${p.sets}` : 'No target set yet';
+      const lastStr = last ? ` · Last: ${last.weight} ${last.unit} × ${last.reps}` : '';
+      const row = el('div', 'entry');
+      row.style.cursor = 'pointer';
+      const main = el('div', 'entry-main');
+      main.appendChild(el('div', 'entry-ex', p.name));
+      main.appendChild(el('div', 'entry-detail', targetStr + lastStr));
+      row.appendChild(main);
+      const goBtn = el('button', 'del-btn', '+');
+      goBtn.style.color = 'var(--accent)';
+      goBtn.style.fontSize = '22px';
+      goBtn.onclick = () => fillFromPlan(p.name, last ? last.weight : p.weight, p.reps, p.sets);
+      row.appendChild(goBtn);
+      nextCard.appendChild(row);
+    });
+    app.appendChild(nextCard);
+
     const addCard = el('div', 'card');
     addCard.appendChild(el('h2', null, 'LOG A SET'));
 
@@ -767,6 +928,13 @@
           const latestWeight = sessions[sessions.length - 1].maxWeight;
           const delta = Math.round((latestWeight - firstWeight) * 10) / 10;
           const unit = sessions[0].unit;
+          const plan = planFor(selectedExercise);
+
+          if (plan && plan.weight != null) {
+            const vsTarget = Math.round((latestWeight - plan.weight) * 10) / 10;
+            const vsLabel = vsTarget > 0 ? `${vsTarget} ${unit} above target` : vsTarget < 0 ? `${Math.abs(vsTarget)} ${unit} below target` : 'right on target';
+            progressCard.appendChild(el('div', 'entry-detail', `Target: ${plan.weight} ${plan.unit} × ${plan.reps} × ${plan.sets} — currently ${vsLabel}`));
+          }
 
           const statsRow = el('div');
           statsRow.style.marginTop = '14px';
