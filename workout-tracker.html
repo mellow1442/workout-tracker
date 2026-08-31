@@ -723,7 +723,7 @@
       exLine.appendChild(badge);
     }
     main.appendChild(exLine);
-    main.appendChild(el('div', 'entry-detail', `${e.weight}${e.unit} × ${e.reps} reps × ${e.sets} set${e.sets > 1 ? 's' : ''}`));
+    main.appendChild(el('div', 'entry-detail', `${e.weight} ${e.unit} × ${e.reps} reps × ${e.sets} set${e.sets > 1 ? 's' : ''}`));
     row.appendChild(main);
 
     const right = el('div', 'entry-right');
