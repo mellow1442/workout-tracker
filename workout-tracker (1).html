@@ -1,0 +1,762 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>IRON LOG — Workout Tracker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;500;600;700&family=Roboto+Mono:wght@500;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root {
+    --bg: #17181A;
+    --surface: #212226;
+    --surface-alt: #2A2B30;
+    --border: #35363C;
+    --text: #F3F1EA;
+    --text-muted: #9A9AA0;
+    --accent: #F2A93B;
+    --accent-dim: #6B5628;
+    --pr: #4FD1A5;
+    --danger: #E2574C;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter', sans-serif;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .app {
+    max-width: 480px;
+    margin: 0 auto;
+    padding: 20px 16px 100px;
+    min-height: 100vh;
+  }
+
+  /* ---------- Header ---------- */
+  header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    margin-bottom: 18px;
+  }
+
+  h1 {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 34px;
+    letter-spacing: 1.5px;
+    margin: 0;
+    line-height: 1;
+  }
+  h1 span { color: var(--accent); }
+
+  .date-line {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .streak {
+    text-align: right;
+    font-family: 'Roboto Mono', monospace;
+  }
+  .streak .num {
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--accent);
+    display: block;
+    line-height: 1;
+  }
+  .streak .label {
+    font-size: 10px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .top-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 14px;
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+  .top-bar button {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    padding: 5px 10px;
+    border-radius: 999px;
+    font-size: 11px;
+  }
+
+  /* ---------- Week strip (signature element) ---------- */
+  .rack {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+    height: 84px;
+    padding: 10px 6px 0;
+    margin-bottom: 22px;
+    background: var(--surface);
+    border-radius: 14px;
+    border: 1px solid var(--border);
+  }
+  .plate-col {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    height: 100%;
+    justify-content: flex-end;
+    gap: 6px;
+  }
+  .plate {
+    width: 60%;
+    max-width: 26px;
+    background: linear-gradient(180deg, var(--accent-dim), var(--accent));
+    border-radius: 6px;
+    position: relative;
+    min-height: 4px;
+    transition: height 0.4s ease;
+  }
+  .plate.empty { background: var(--surface-alt); }
+  .plate.today { background: linear-gradient(180deg, #8a6a1e, var(--accent)); box-shadow: 0 0 0 2px var(--accent) inset; }
+  .plate-col .day-label {
+    font-size: 9px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    font-family: 'Roboto Mono', monospace;
+  }
+
+  /* ---------- Cards ---------- */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 16px;
+    margin-bottom: 18px;
+  }
+
+  .card h2 {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 18px;
+    letter-spacing: 1px;
+    margin: 0 0 12px;
+    color: var(--text-muted);
+  }
+
+  /* ---------- Form ---------- */
+  .field { margin-bottom: 12px; }
+  .field label {
+    display: block;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+    margin-bottom: 6px;
+  }
+  input[type="text"], input[type="number"], input[type="password"], input[type="email"] {
+    width: 100%;
+    background: var(--surface-alt);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 12px;
+    color: var(--text);
+    font-family: 'Roboto Mono', monospace;
+    font-size: 15px;
+  }
+  input[type="text"], input[type="email"] { font-family: 'Inter', sans-serif; }
+  input:focus { outline: none; border-color: var(--accent); }
+
+  .row3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+
+  .unit-toggle {
+    display: flex;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  .unit-toggle button {
+    flex: 1;
+    padding: 10px 0;
+    background: var(--surface-alt);
+    color: var(--text-muted);
+    border: none;
+    font-family: 'Roboto Mono', monospace;
+    font-size: 13px;
+  }
+  .unit-toggle button.active { background: var(--accent); color: #1B1B1D; font-weight: 700; }
+
+  .chips {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+  }
+  .chip {
+    background: var(--surface-alt);
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    padding: 6px 12px;
+    border-radius: 999px;
+    font-size: 12px;
+  }
+
+  .log-btn {
+    width: 100%;
+    padding: 14px;
+    background: var(--accent);
+    color: #1B1B1D;
+    border: none;
+    border-radius: 10px;
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 18px;
+    letter-spacing: 1px;
+    margin-top: 2px;
+  }
+  .log-btn:active { transform: scale(0.98); }
+  .log-btn:disabled { opacity: 0.6; }
+
+  /* ---------- Entries ---------- */
+  .entry {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .entry:last-child { border-bottom: none; }
+  .entry-main { display: flex; flex-direction: column; gap: 2px; }
+  .entry-ex { font-weight: 600; font-size: 14px; }
+  .entry-detail {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+  .pr-badge {
+    background: rgba(79,209,165,0.15);
+    color: var(--pr);
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 7px;
+    border-radius: 999px;
+    margin-left: 8px;
+    letter-spacing: 0.5px;
+  }
+  .entry-right { display: flex; align-items: center; gap: 10px; }
+  .vol { font-family: 'Roboto Mono', monospace; font-size: 13px; color: var(--text-muted); }
+  .del-btn {
+    background: none;
+    border: none;
+    color: var(--danger);
+    font-size: 18px;
+    line-height: 1;
+    padding: 4px;
+  }
+
+  .empty-state {
+    text-align: center;
+    padding: 20px 10px;
+    color: var(--text-muted);
+    font-size: 13px;
+  }
+
+  /* ---------- History ---------- */
+  .day-group { margin-bottom: 4px; }
+  .day-header {
+    display: flex;
+    justify-content: space-between;
+    padding: 10px 0;
+    cursor: pointer;
+    border-bottom: 1px solid var(--border);
+  }
+  .day-header .dh-left { font-weight: 600; font-size: 13px; }
+  .day-header .dh-right {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+  .day-body { display: none; padding: 4px 0 6px; }
+  .day-body.open { display: block; }
+  .chevron { transition: transform 0.2s ease; display: inline-block; margin-left: 6px; color: var(--text-muted); }
+  .chevron.open { transform: rotate(90deg); }
+
+  .footer-note {
+    text-align: center;
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 10px;
+  }
+  .footer-note button {
+    background: none;
+    border: none;
+    color: var(--danger);
+    font-size: 11px;
+    text-decoration: underline;
+    padding: 0;
+  }
+
+  .loading {
+    text-align: center;
+    padding: 60px 0;
+    color: var(--text-muted);
+    font-family: 'Roboto Mono', monospace;
+    font-size: 13px;
+  }
+
+  /* ---------- Auth ---------- */
+  .auth-wrap { margin-top: 50px; }
+  .auth-error {
+    background: rgba(226,87,76,0.12);
+    color: var(--danger);
+    border: 1px solid rgba(226,87,76,0.4);
+    border-radius: 10px;
+    padding: 10px 12px;
+    font-size: 12px;
+    margin-bottom: 14px;
+  }
+  .auth-toggle-line {
+    text-align: center;
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 4px;
+  }
+  .auth-toggle-line button {
+    background: none;
+    border: none;
+    color: var(--accent);
+    font-size: 12px;
+    padding: 0;
+    text-decoration: underline;
+  }
+</style>
+</head>
+<body>
+
+<div class="app" id="app">
+  <div class="loading" id="loading">Loading your log…</div>
+</div>
+
+<script>
+(function () {
+  const DAY_MS = 86400000;
+  const SUPABASE_URL = 'https://kwahaytoqulhbmislfet.supabase.co';
+  const SUPABASE_KEY = 'sb_publishable_DnpvrVxuEHh7YTQpYtho2g_tKgWBRLE';
+  const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+  let entries = [];
+  let prefs = { unit: 'kg' };
+  let openDay = null;
+  let session = null;
+  let authMode = 'signin';
+  let authError = '';
+  let authBusy = false;
+
+  function localDateStr(d) {
+    const y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, '0'), day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  }
+  function todayStr() { return localDateStr(new Date()); }
+  function prettyDate(str) {
+    const [y, m, d] = str.split('-').map(Number);
+    const dt = new Date(y, m - 1, d);
+    const today = todayStr();
+    if (str === today) return 'Today';
+    const yest = localDateStr(new Date(Date.now() - DAY_MS));
+    if (str === yest) return 'Yesterday';
+    return dt.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+  }
+  function dayLabel(d) {
+    return d.toLocaleDateString(undefined, { weekday: 'narrow' });
+  }
+
+  function currentUnit() { return prefs.unit; }
+
+  function loadPrefs() {
+    try {
+      const raw = localStorage.getItem('workout-prefs');
+      prefs = raw ? JSON.parse(raw) : { unit: 'kg' };
+    } catch (e) { prefs = { unit: 'kg' }; }
+  }
+  function savePrefs() {
+    try { localStorage.setItem('workout-prefs', JSON.stringify(prefs)); }
+    catch (e) { console.error('Failed to save prefs', e); }
+  }
+
+  async function loadEntries() {
+    try {
+      const { data, error } = await sb.from('entries').select('*').order('created_at', { ascending: false });
+      if (error) throw error;
+      entries = (data || []).map(r => ({
+        id: r.id,
+        exercise: r.exercise,
+        weight: r.weight,
+        reps: r.reps,
+        sets: r.sets,
+        unit: r.unit,
+        date: r.date,
+        volume: r.volume,
+        isPR: r.is_pr,
+        ts: r.created_at ? new Date(r.created_at).getTime() : Date.now()
+      }));
+    } catch (e) {
+      console.error('Failed to load entries', e);
+      entries = [];
+    }
+  }
+
+  function exerciseNames() {
+    const seen = new Map();
+    entries.forEach(e => seen.set(e.exercise.toLowerCase(), e.exercise));
+    return Array.from(seen.values());
+  }
+
+  function bestWeightBefore(exercise, beforeId) {
+    let max = 0;
+    entries.forEach(e => {
+      if (e.id === beforeId) return;
+      if (e.exercise.toLowerCase() === exercise.toLowerCase() && e.unit === currentUnit()) {
+        if (e.weight > max) max = e.weight;
+      }
+    });
+    return max;
+  }
+
+  function computeStreak() {
+    const days = new Set(entries.map(e => e.date));
+    let streak = 0;
+    let cursor = new Date();
+    if (!days.has(todayStr())) cursor = new Date(Date.now() - DAY_MS);
+    while (days.has(localDateStr(cursor))) {
+      streak++;
+      cursor = new Date(cursor.getTime() - DAY_MS);
+    }
+    return streak;
+  }
+
+  function weekVolumes() {
+    const out = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(Date.now() - i * DAY_MS);
+      const key = localDateStr(d);
+      const vol = entries.filter(e => e.date === key).reduce((s, e) => s + e.volume, 0);
+      out.push({ date: d, key, vol, isToday: i === 0 });
+    }
+    return out;
+  }
+
+  function groupByDay(list) {
+    const map = new Map();
+    list.forEach(e => {
+      if (!map.has(e.date)) map.set(e.date, []);
+      map.get(e.date).push(e);
+    });
+    return Array.from(map.entries()).sort((a, b) => b[0].localeCompare(a[0]));
+  }
+
+  async function addEntry(exercise, weight, reps, sets) {
+    const unit = currentUnit();
+    const prevBest = bestWeightBefore(exercise, null);
+    const isPR = weight > prevBest && prevBest > 0;
+    const date = todayStr();
+    const volume = weight * reps * sets;
+    try {
+      const { data, error } = await sb.from('entries').insert({
+        user_id: session.user.id,
+        exercise: exercise.trim(),
+        weight, reps, sets, unit, date, volume,
+        is_pr: isPR
+      }).select().single();
+      if (error) throw error;
+      entries.unshift({
+        id: data.id, exercise: data.exercise, weight: data.weight, reps: data.reps,
+        sets: data.sets, unit: data.unit, date: data.date, volume: data.volume,
+        isPR: data.is_pr, ts: new Date(data.created_at).getTime()
+      });
+      render();
+    } catch (e) {
+      console.error('Failed to add entry', e);
+      alert('Could not save set:\n\n' + (e.message || JSON.stringify(e)));
+    }
+  }
+
+  async function deleteEntry(id) {
+    try {
+      const { error } = await sb.from('entries').delete().eq('id', id);
+      if (error) throw error;
+      entries = entries.filter(e => e.id !== id);
+      render();
+    } catch (e) {
+      console.error('Failed to delete entry', e);
+      alert('Could not delete — try again.');
+    }
+  }
+
+  async function clearAll() {
+    try {
+      const { error } = await sb.from('entries').delete().eq('user_id', session.user.id);
+      if (error) throw error;
+      entries = [];
+      render();
+    } catch (e) {
+      console.error('Failed to clear entries', e);
+    }
+  }
+
+  function el(tag, cls, html) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (html !== undefined) e.innerHTML = html;
+    return e;
+  }
+
+  // ---------- Auth screen ----------
+  function renderLogin() {
+    const app = document.getElementById('app');
+    app.innerHTML = '';
+    const wrap = el('div', 'auth-wrap');
+    wrap.appendChild(el('h1', null, 'IRON <span>LOG</span>'));
+    wrap.appendChild(el('div', 'date-line', authMode === 'signin' ? 'Sign in to your log' : 'Create your account'));
+
+    const card = el('div', 'card');
+    card.style.marginTop = '20px';
+
+    if (authError) {
+      card.appendChild(el('div', 'auth-error', authError));
+    }
+
+    const emailField = el('div', 'field');
+    emailField.innerHTML = `<label>Email</label><input type="email" id="auth-email" autocomplete="email" placeholder="you@example.com">`;
+    card.appendChild(emailField);
+
+    const passField = el('div', 'field');
+    passField.innerHTML = `<label>Password</label><input type="password" id="auth-password" autocomplete="${authMode === 'signin' ? 'current-password' : 'new-password'}" placeholder="••••••••">`;
+    card.appendChild(passField);
+
+    const submitBtn = el('button', 'log-btn', authBusy ? 'PLEASE WAIT…' : (authMode === 'signin' ? 'SIGN IN' : 'SIGN UP'));
+    submitBtn.disabled = authBusy;
+    submitBtn.onclick = async () => {
+      const email = document.getElementById('auth-email').value.trim();
+      const password = document.getElementById('auth-password').value;
+      if (!email || !password) return;
+      authBusy = true;
+      authError = '';
+      renderLogin();
+      try {
+        if (authMode === 'signin') {
+          const { error } = await sb.auth.signInWithPassword({ email, password });
+          if (error) throw error;
+        } else {
+          const { data, error } = await sb.auth.signUp({ email, password });
+          if (error) throw error;
+          if (!data.session) {
+            authError = 'Account created — check your email to confirm, then sign in.';
+            authMode = 'signin';
+          }
+        }
+      } catch (e) {
+        authError = e.message || 'Something went wrong.';
+      }
+      authBusy = false;
+      renderLogin();
+    };
+    card.appendChild(submitBtn);
+    wrap.appendChild(card);
+
+    const toggleLine = el('div', 'auth-toggle-line');
+    const toggleBtn = el('button', null, authMode === 'signin' ? "New here? Create an account" : 'Already have an account? Sign in');
+    toggleBtn.onclick = () => {
+      authMode = authMode === 'signin' ? 'signup' : 'signin';
+      authError = '';
+      renderLogin();
+    };
+    toggleLine.appendChild(toggleBtn);
+    wrap.appendChild(toggleLine);
+
+    app.appendChild(wrap);
+  }
+
+  // ---------- Main app screen ----------
+  function render() {
+    const app = document.getElementById('app');
+    app.innerHTML = '';
+
+    const topBar = el('div', 'top-bar');
+    const emailSpan = el('span', null, session && session.user ? session.user.email : '');
+    const logoutBtn = el('button', null, 'Log out');
+    logoutBtn.onclick = async () => { await sb.auth.signOut(); };
+    topBar.appendChild(emailSpan);
+    topBar.appendChild(logoutBtn);
+    app.appendChild(topBar);
+
+    const header = el('header');
+    const titleWrap = el('div');
+    titleWrap.appendChild(el('h1', null, 'IRON <span>LOG</span>'));
+    titleWrap.appendChild(el('div', 'date-line', new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })));
+    header.appendChild(titleWrap);
+    const streak = el('div', 'streak');
+    streak.innerHTML = `<span class="num">${computeStreak()}</span><span class="label">day streak</span>`;
+    header.appendChild(streak);
+    app.appendChild(header);
+
+    const rack = el('div', 'rack');
+    const vols = weekVolumes();
+    const maxVol = Math.max(...vols.map(v => v.vol), 1);
+    vols.forEach(v => {
+      const col = el('div', 'plate-col');
+      const plate = el('div', 'plate' + (v.vol === 0 ? ' empty' : '') + (v.isToday ? ' today' : ''));
+      const heightPct = v.vol === 0 ? 6 : Math.max(10, Math.round((v.vol / maxVol) * 100));
+      plate.style.height = heightPct + '%';
+      col.appendChild(plate);
+      col.appendChild(el('div', 'day-label', dayLabel(v.date)));
+      rack.appendChild(col);
+    });
+    app.appendChild(rack);
+
+    const addCard = el('div', 'card');
+    addCard.appendChild(el('h2', null, 'LOG A SET'));
+
+    const names = exerciseNames().slice(0, 6);
+    if (names.length) {
+      const chips = el('div', 'chips');
+      names.forEach(n => {
+        const c = el('div', 'chip', n);
+        c.style.cursor = 'pointer';
+        c.onclick = () => { document.getElementById('f-exercise').value = n; };
+        chips.appendChild(c);
+      });
+      addCard.appendChild(chips);
+    }
+
+    const fEx = el('div', 'field');
+    fEx.innerHTML = `<label>Exercise</label><input type="text" id="f-exercise" placeholder="e.g. Bench Press" autocomplete="off">`;
+    addCard.appendChild(fEx);
+
+    const unitField = el('div', 'field');
+    unitField.innerHTML = `<label>Unit</label>`;
+    const toggle = el('div', 'unit-toggle');
+    ['kg', 'lb'].forEach(u => {
+      const b = el('button', u === prefs.unit ? 'active' : '', u);
+      b.onclick = () => { prefs.unit = u; savePrefs(); render(); };
+      toggle.appendChild(b);
+    });
+    unitField.appendChild(toggle);
+    addCard.appendChild(unitField);
+
+    const row = el('div', 'row3');
+    row.innerHTML = `
+      <div class="field"><label>Weight</label><input type="number" id="f-weight" inputmode="decimal" placeholder="0" min="0" step="0.5"></div>
+      <div class="field"><label>Reps</label><input type="number" id="f-reps" inputmode="numeric" placeholder="0" min="0"></div>
+      <div class="field"><label>Sets</label><input type="number" id="f-sets" inputmode="numeric" placeholder="1" min="1" value="1"></div>
+    `;
+    addCard.appendChild(row);
+
+    const logBtn = el('button', 'log-btn', 'LOG SET');
+    logBtn.onclick = async () => {
+      const exercise = document.getElementById('f-exercise').value.trim();
+      const weight = parseFloat(document.getElementById('f-weight').value) || 0;
+      const reps = parseInt(document.getElementById('f-reps').value) || 0;
+      const sets = parseInt(document.getElementById('f-sets').value) || 1;
+      if (!exercise || reps <= 0) return;
+      logBtn.disabled = true;
+      logBtn.textContent = 'SAVING…';
+      await addEntry(exercise, weight, reps, sets);
+    };
+    addCard.appendChild(logBtn);
+    app.appendChild(addCard);
+
+    const todayCard = el('div', 'card');
+    todayCard.appendChild(el('h2', null, "TODAY'S SETS"));
+    const todaysEntries = entries.filter(e => e.date === todayStr());
+    if (!todaysEntries.length) {
+      todayCard.appendChild(el('div', 'empty-state', 'No sets logged yet today. Add your first one above.'));
+    } else {
+      todaysEntries.forEach(e => todayCard.appendChild(renderEntryRow(e)));
+    }
+    app.appendChild(todayCard);
+
+    const pastEntries = entries.filter(e => e.date !== todayStr());
+    if (pastEntries.length) {
+      const histCard = el('div', 'card');
+      histCard.appendChild(el('h2', null, 'HISTORY'));
+      const grouped = groupByDay(pastEntries);
+      grouped.forEach(([date, list]) => {
+        const group = el('div', 'day-group');
+        const dayHeader = el('div', 'day-header');
+        const vol = list.reduce((s, e) => s + e.volume, 0);
+        const isOpen = openDay === date;
+        dayHeader.innerHTML = `<span class="dh-left">${prettyDate(date)} <span class="chevron${isOpen ? ' open' : ''}">›</span></span><span class="dh-right">${list.length} set${list.length > 1 ? 's' : ''} · ${Math.round(vol)} vol</span>`;
+        dayHeader.onclick = () => { openDay = isOpen ? null : date; render(); };
+        group.appendChild(dayHeader);
+        const body = el('div', 'day-body' + (isOpen ? ' open' : ''));
+        list.forEach(e => body.appendChild(renderEntryRow(e)));
+        group.appendChild(body);
+        histCard.appendChild(group);
+      });
+      app.appendChild(histCard);
+    }
+
+    const footer = el('div', 'footer-note');
+    const clearBtn = el('button', null, 'Clear all data');
+    clearBtn.onclick = () => { if (confirm('Delete all logged sets? This cannot be undone.')) clearAll(); };
+    footer.appendChild(document.createTextNode('Synced to your account. '));
+    footer.appendChild(clearBtn);
+    app.appendChild(footer);
+  }
+
+  function renderEntryRow(e) {
+    const row = el('div', 'entry');
+    const main = el('div', 'entry-main');
+    const exLine = el('div', 'entry-ex');
+    exLine.textContent = e.exercise;
+    if (e.isPR) {
+      const badge = el('span', 'pr-badge', 'PR');
+      exLine.appendChild(badge);
+    }
+    main.appendChild(exLine);
+    main.appendChild(el('div', 'entry-detail', `${e.weight}${e.unit} × ${e.reps} reps × ${e.sets} set${e.sets > 1 ? 's' : ''}`));
+    row.appendChild(main);
+
+    const right = el('div', 'entry-right');
+    right.appendChild(el('div', 'vol', Math.round(e.volume) + ' vol'));
+    const del = el('button', 'del-btn', '×');
+    del.onclick = () => deleteEntry(e.id);
+    right.appendChild(del);
+    row.appendChild(right);
+    return row;
+  }
+
+  async function boot() {
+    if (!session) {
+      renderLogin();
+    } else {
+      document.getElementById('app').innerHTML = '<div class="loading">Loading your log…</div>';
+      await loadEntries();
+      render();
+    }
+  }
+
+  (async function init() {
+    loadPrefs();
+    const { data } = await sb.auth.getSession();
+    session = data.session;
+    sb.auth.onAuthStateChange((_event, s) => {
+      session = s;
+      boot();
+    });
+    await boot();
+  })();
+})();
+</script>
+
+</body>
+</html>
