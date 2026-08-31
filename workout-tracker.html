@@ -485,7 +485,7 @@
       render();
     } catch (e) {
       console.error('Failed to add entry', e);
-      alert('Could not save set — check your connection and try again.');
+      alert('Could not save set:\n\n' + (e.message || JSON.stringify(e)));
     }
   }
 
