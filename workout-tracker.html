@@ -402,22 +402,26 @@
     return null;
   }
 
-  function lastSessionInfo() {
-    if (!entries.length) return null;
-    let lastDate = entries[0].date;
-    entries.forEach(e => { if (e.date > lastDate) lastDate = e.date; });
-    const namesLogged = new Set(entries.filter(e => e.date === lastDate).map(e => e.exercise.toLowerCase()));
+  function currentOrNextWorkout() {
+    const today = todayStr();
+    const todaysEntries = entries.filter(e => e.date === today);
+    if (todaysEntries.length) {
+      const namesLogged = new Set(todaysEntries.map(e => e.exercise.toLowerCase()));
+      const overlap = plan => plan.filter(p => namesLogged.has(p.name.toLowerCase())).length;
+      const scoreA = overlap(WORKOUT_PLANS.A), scoreB = overlap(WORKOUT_PLANS.B);
+      return { type: scoreB > scoreA ? 'B' : 'A', date: today, inProgress: true };
+    }
+    const priorEntries = entries.filter(e => e.date < today);
+    if (!priorEntries.length) return { type: 'A', date: today, inProgress: false };
+    let lastDate = priorEntries[0].date;
+    priorEntries.forEach(e => { if (e.date > lastDate) lastDate = e.date; });
+    const namesLogged = new Set(priorEntries.filter(e => e.date === lastDate).map(e => e.exercise.toLowerCase()));
     const overlap = plan => plan.filter(p => namesLogged.has(p.name.toLowerCase())).length;
     const scoreA = overlap(WORKOUT_PLANS.A), scoreB = overlap(WORKOUT_PLANS.B);
-    return { date: lastDate, type: scoreB > scoreA ? 'B' : 'A' };
-  }
-
-  function nextWorkout() {
-    const last = lastSessionInfo();
-    if (!last) return { type: 'A', date: todayStr() };
-    const [y, m, d] = last.date.split('-').map(Number);
+    const lastType = scoreB > scoreA ? 'B' : 'A';
+    const [y, m, d] = lastDate.split('-').map(Number);
     const nd = new Date(y, m - 1, d + 2);
-    return { type: last.type === 'A' ? 'B' : 'A', date: localDateStr(nd) };
+    return { type: lastType === 'A' ? 'B' : 'A', date: localDateStr(nd), inProgress: false };
   }
 
   function formatUpcoming(dateStr) {
@@ -805,8 +809,8 @@
 
     // Next workout
     const nextCard = el('div', 'card');
-    nextCard.appendChild(el('h2', null, 'NEXT WORKOUT'));
-    const nw = nextWorkout();
+    const nw = currentOrNextWorkout();
+    nextCard.appendChild(el('h2', null, nw.inProgress ? "TODAY'S WORKOUT" : 'NEXT WORKOUT'));
     const nwTitle = el('div', 'entry-ex', `Workout ${nw.type} · ${formatUpcoming(nw.date)}`);
     nwTitle.style.fontSize = '17px';
     nwTitle.style.marginBottom = '10px';
@@ -814,12 +818,15 @@
     WORKOUT_PLANS[nw.type].forEach(p => {
       const matches = entries.filter(e => e.exercise.toLowerCase() === p.name.toLowerCase()).sort((a, b) => b.ts - a.ts);
       const last = matches[0];
+      const doneToday = nw.inProgress && matches.some(e => e.date === nw.date);
       const targetStr = p.weight != null ? `Target: ${p.weight} ${p.unit} × ${p.reps} × ${p.sets}` : 'No target set yet';
       const lastStr = last ? ` · Last: ${last.weight} ${last.unit} × ${last.reps}` : '';
       const row = el('div', 'entry');
       row.style.cursor = 'pointer';
       const main = el('div', 'entry-main');
-      main.appendChild(el('div', 'entry-ex', p.name));
+      const nameLine = el('div', 'entry-ex', p.name);
+      if (doneToday) nameLine.appendChild(el('span', 'pr-badge', 'DONE'));
+      main.appendChild(nameLine);
       main.appendChild(el('div', 'entry-detail', targetStr + lastStr));
       row.appendChild(main);
       const goBtn = el('button', 'del-btn', '+');
