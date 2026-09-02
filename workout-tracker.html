@@ -402,8 +402,25 @@
     return null;
   }
 
+  function getOverride() {
+    try {
+      const raw = localStorage.getItem('workout-override');
+      return raw ? JSON.parse(raw) : null;
+    } catch (e) { return null; }
+  }
+  function setOverride(type) {
+    try { localStorage.setItem('workout-override', JSON.stringify({ type, date: todayStr() })); }
+    catch (e) {}
+  }
+
   function currentOrNextWorkout() {
     const today = todayStr();
+    const override = getOverride();
+    if (override && override.date === today) {
+      const [y, m, d] = override.date.split('-').map(Number);
+      const nd = new Date(y, m - 1, d + 2);
+      return { type: override.type === 'A' ? 'B' : 'A', date: localDateStr(nd), inProgress: false };
+    }
     const todaysEntries = entries.filter(e => e.date === today);
     if (todaysEntries.length) {
       const namesLogged = new Set(todaysEntries.map(e => e.exercise.toLowerCase()));
@@ -836,6 +853,12 @@
       row.appendChild(goBtn);
       nextCard.appendChild(row);
     });
+    if (nw.inProgress) {
+      const completeBtn = el('button', 'log-btn', 'COMPLETE WORKOUT');
+      completeBtn.style.marginTop = '10px';
+      completeBtn.onclick = () => { setOverride(nw.type); render(); };
+      nextCard.appendChild(completeBtn);
+    }
     app.appendChild(nextCard);
 
     const addCard = el('div', 'card');
