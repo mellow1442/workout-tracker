@@ -98,6 +98,24 @@
     font-size: 11px;
   }
 
+  .tab-bar {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 18px;
+  }
+  .tab-btn {
+    flex: 1;
+    padding: 10px 0;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text-muted);
+    font-family: 'Bebas Neue', sans-serif;
+    letter-spacing: 1px;
+    font-size: 14px;
+  }
+  .tab-btn.active { background: var(--accent); color: #1B1B1D; }
+
   /* ---------- Week strip (signature element) ---------- */
   .rack {
     display: flex;
@@ -369,6 +387,9 @@
   let prefs = { unit: 'kg' };
   let openDay = null;
   let selectedExercise = null;
+  let currentTab = 'tracker';
+  let calcUnit = 'lbs';
+  let calcTotalValue = '';
   let restRemaining = 90;
   let restRunning = false;
   let restIntervalId = null;
@@ -534,6 +555,117 @@
   }
 
   function currentUnit() { return prefs.unit; }
+
+  const BAR_WEIGHTS = { lbs: 45, kg: 20 };
+  const PLATE_SETS = { lbs: [45, 35, 25, 10, 5, 2.5], kg: [25, 20, 15, 10, 5, 2.5, 1.25] };
+  const PLATE_COLORS = { 45: '#C0392B', 35: '#D68910', 25: '#F1C40F', 20: '#2980B9', 15: '#27AE60', 10: '#8E44AD', 5: '#BDC3C7', 2.5: '#7F8C8D', 1.25: '#566573' };
+
+  function calculatePlates(total, unit) {
+    const bar = BAR_WEIGHTS[unit];
+    const perSide = (total - bar) / 2;
+    if (perSide < -1e-6) return { error: `That's less than the bar itself (${bar} ${unit}).` };
+    if (perSide <= 1e-6) return { bar, perSide: 0, used: [], remaining: 0 };
+    const denoms = PLATE_SETS[unit];
+    let remaining = perSide;
+    const used = [];
+    denoms.forEach(d => {
+      while (remaining + 1e-6 >= d) {
+        used.push(d);
+        remaining -= d;
+      }
+    });
+    remaining = Math.round(remaining * 100) / 100;
+    return { bar, perSide, used, remaining };
+  }
+
+  function buildBarbellSVG(usedPlates, unit) {
+    const w = 400, h = 170, midY = 85;
+    const maxDenom = Math.max(unit === 'kg' ? 25 : 45, ...usedPlates, 1);
+    const plateWidth = 15, gap = 3;
+    const heightFor = v => 34 + (v / maxDenom) * 96;
+    const colorFor = v => PLATE_COLORS[v] || '#F2A93B';
+    let svg = `<svg viewBox="0 0 ${w} ${h}" width="100%" height="180" xmlns="http://www.w3.org/2000/svg">`;
+    svg += `<rect x="6" y="${midY - 5}" width="${w - 12}" height="10" rx="3" style="fill:#9aa0a6"></rect>`;
+    let leftX = w / 2 - 18;
+    usedPlates.forEach(v => {
+      const ph = heightFor(v), py = midY - ph / 2;
+      leftX -= plateWidth;
+      svg += `<rect x="${leftX}" y="${py}" width="${plateWidth}" height="${ph}" rx="2" style="fill:${colorFor(v)};stroke:#00000055;stroke-width:1"></rect>`;
+      svg += `<text x="${leftX + plateWidth / 2}" y="${midY}" font-size="8" text-anchor="middle" dominant-baseline="middle" transform="rotate(-90 ${leftX + plateWidth / 2} ${midY})" style="fill:#111;font-family:monospace;font-weight:700">${v}</text>`;
+      leftX -= gap;
+    });
+    let rightX = w / 2 + 18;
+    usedPlates.forEach(v => {
+      const ph = heightFor(v), py = midY - ph / 2;
+      svg += `<rect x="${rightX}" y="${py}" width="${plateWidth}" height="${ph}" rx="2" style="fill:${colorFor(v)};stroke:#00000055;stroke-width:1"></rect>`;
+      svg += `<text x="${rightX + plateWidth / 2}" y="${midY}" font-size="8" text-anchor="middle" dominant-baseline="middle" transform="rotate(-90 ${rightX + plateWidth / 2} ${midY})" style="fill:#111;font-family:monospace;font-weight:700">${v}</text>`;
+      rightX += plateWidth + gap;
+    });
+    svg += `</svg>`;
+    return svg;
+  }
+
+  function updatePlateResults() {
+    const totalInput = document.getElementById('plate-total');
+    const resultDiv = document.getElementById('plate-result');
+    if (!totalInput || !resultDiv) return;
+    calcTotalValue = totalInput.value;
+    const total = parseFloat(totalInput.value);
+    if (!total || isNaN(total)) {
+      resultDiv.innerHTML = '<div class="empty-state">Enter a total weight to see the plate breakdown.</div>';
+      return;
+    }
+    const calc = calculatePlates(total, calcUnit);
+    if (calc.error) {
+      resultDiv.innerHTML = `<div class="empty-state">${calc.error}</div>`;
+      return;
+    }
+    let html = buildBarbellSVG(calc.used, calcUnit);
+    const sideStr = calc.used.length ? calc.used.map(v => v + ' ' + calcUnit).join(' + ') : 'no plates';
+    html += `<div class="date-line" style="margin-top:10px;text-align:center;">Bar (${calc.bar} ${calcUnit}) + ${sideStr} per side</div>`;
+    if (calc.remaining > 0.01) {
+      html += `<div class="auth-error" style="margin-top:10px;">Closest match — ${calc.remaining} ${calcUnit} per side can't be made with standard plates.</div>`;
+    }
+    resultDiv.innerHTML = html;
+  }
+
+  function renderPlatesTab(app) {
+    const card = el('div', 'card');
+    card.appendChild(el('h2', null, 'PLATE CALCULATOR'));
+
+    const unitField = el('div', 'field');
+    unitField.appendChild(el('label', null, 'Unit'));
+    const toggle = el('div', 'unit-toggle');
+    ['lbs', 'kg'].forEach(u => {
+      const b = el('button', u === calcUnit ? 'active' : '', u);
+      b.onclick = () => { calcUnit = u; render(); };
+      toggle.appendChild(b);
+    });
+    unitField.appendChild(toggle);
+    card.appendChild(unitField);
+
+    const totalField = el('div', 'field');
+    totalField.appendChild(el('label', null, 'Total Weight'));
+    const totalInput = document.createElement('input');
+    totalInput.type = 'number';
+    totalInput.id = 'plate-total';
+    totalInput.inputMode = 'decimal';
+    totalInput.placeholder = 'e.g. 115';
+    totalInput.min = '0';
+    totalInput.step = '2.5';
+    totalInput.value = calcTotalValue;
+    totalInput.oninput = updatePlateResults;
+    totalField.appendChild(totalInput);
+    card.appendChild(totalField);
+
+    const resultDiv = el('div');
+    resultDiv.id = 'plate-result';
+    resultDiv.style.marginTop = '6px';
+    card.appendChild(resultDiv);
+
+    app.appendChild(card);
+    updatePlateResults();
+  }
 
   function loadPrefs() {
     try {
@@ -782,6 +914,20 @@
     topBar.appendChild(emailSpan);
     topBar.appendChild(logoutBtn);
     app.appendChild(topBar);
+
+    const tabBar = el('div', 'tab-bar');
+    const trackerTabBtn = el('button', 'tab-btn' + (currentTab === 'tracker' ? ' active' : ''), 'TRACKER');
+    trackerTabBtn.onclick = () => { currentTab = 'tracker'; render(); };
+    const platesTabBtn = el('button', 'tab-btn' + (currentTab === 'plates' ? ' active' : ''), 'PLATE CALC');
+    platesTabBtn.onclick = () => { currentTab = 'plates'; render(); };
+    tabBar.appendChild(trackerTabBtn);
+    tabBar.appendChild(platesTabBtn);
+    app.appendChild(tabBar);
+
+    if (currentTab === 'plates') {
+      renderPlatesTab(app);
+      return;
+    }
 
     const header = el('header');
     const titleWrap = el('div');
