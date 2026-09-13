@@ -423,9 +423,11 @@
     return null;
   }
 
+  function normalizeUnit(u) { return (u === 'lb' || u === 'lbs') ? 'lbs' : u; }
+
   function targetWeightFor(planEntry) {
     const best = entries
-      .filter(e => e.exercise.toLowerCase() === planEntry.name.toLowerCase() && e.unit === planEntry.unit)
+      .filter(e => e.exercise.toLowerCase() === planEntry.name.toLowerCase() && normalizeUnit(e.unit) === normalizeUnit(planEntry.unit))
       .reduce((max, e) => Math.max(max, e.weight), 0);
     return best > 0 ? best : planEntry.weight;
   }
