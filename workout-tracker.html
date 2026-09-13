@@ -393,8 +393,10 @@
   let restRemaining = 90;
   let restRunning = false;
   let restIntervalId = null;
+  let workoutPlans = { A: [], B: [] };
+  let planRowExists = false;
 
-  const WORKOUT_PLANS = {
+  const DEFAULT_LEGACY_PLAN = {
     A: [
       { name: 'Deadlift', weight: 115, unit: 'lbs', reps: 8, sets: 3 },
       { name: 'Overhead Press', weight: 55, unit: 'lbs', reps: 10, sets: 3 },
@@ -415,9 +417,50 @@
     ]
   };
 
+  async function loadPlan() {
+    try {
+      const { data, error } = await sb.from('user_plans').select('*').eq('user_id', session.user.id).maybeSingle();
+      if (error) throw error;
+      if (data && data.plan) {
+        workoutPlans = data.plan;
+        planRowExists = true;
+      } else {
+        planRowExists = false;
+        const namesLogged = new Set(entries.map(e => e.exercise.toLowerCase()));
+        const legacyNames = [...DEFAULT_LEGACY_PLAN.A, ...DEFAULT_LEGACY_PLAN.B].map(p => p.name.toLowerCase());
+        const matchCount = legacyNames.filter(n => namesLogged.has(n)).length;
+        if (matchCount >= 3) {
+          workoutPlans = JSON.parse(JSON.stringify(DEFAULT_LEGACY_PLAN));
+          await savePlan();
+        } else {
+          workoutPlans = { A: [], B: [] };
+        }
+      }
+    } catch (e) {
+      console.error('Failed to load plan', e);
+      workoutPlans = { A: [], B: [] };
+    }
+  }
+
+  async function savePlan() {
+    try {
+      if (planRowExists) {
+        const { error } = await sb.from('user_plans').update({ plan: workoutPlans }).eq('user_id', session.user.id);
+        if (error) throw error;
+      } else {
+        const { error } = await sb.from('user_plans').insert({ user_id: session.user.id, plan: workoutPlans });
+        if (error) throw error;
+        planRowExists = true;
+      }
+    } catch (e) {
+      console.error('Failed to save plan', e);
+      alert('Could not save your plan — check your connection and try again.');
+    }
+  }
+
   function planFor(exerciseName) {
     for (const type of ['A', 'B']) {
-      const found = WORKOUT_PLANS[type].find(p => p.name.toLowerCase() === exerciseName.toLowerCase());
+      const found = workoutPlans[type].find(p => p.name.toLowerCase() === exerciseName.toLowerCase());
       if (found) return found;
     }
     return null;
@@ -455,7 +498,7 @@
     if (todaysEntries.length) {
       const namesLogged = new Set(todaysEntries.map(e => e.exercise.toLowerCase()));
       const overlap = plan => plan.filter(p => namesLogged.has(p.name.toLowerCase())).length;
-      const scoreA = overlap(WORKOUT_PLANS.A), scoreB = overlap(WORKOUT_PLANS.B);
+      const scoreA = overlap(workoutPlans.A), scoreB = overlap(workoutPlans.B);
       return { type: scoreB > scoreA ? 'B' : 'A', date: today, inProgress: true };
     }
     const priorEntries = entries.filter(e => e.date < today);
@@ -464,7 +507,7 @@
     priorEntries.forEach(e => { if (e.date > lastDate) lastDate = e.date; });
     const namesLogged = new Set(priorEntries.filter(e => e.date === lastDate).map(e => e.exercise.toLowerCase()));
     const overlap = plan => plan.filter(p => namesLogged.has(p.name.toLowerCase())).length;
-    const scoreA = overlap(WORKOUT_PLANS.A), scoreB = overlap(WORKOUT_PLANS.B);
+    const scoreA = overlap(workoutPlans.A), scoreB = overlap(workoutPlans.B);
     const lastType = scoreB > scoreA ? 'B' : 'A';
     const [y, m, d] = lastDate.split('-').map(Number);
     const nd = new Date(y, m - 1, d + 2);
@@ -636,6 +679,83 @@
       html += `<div class="auth-error" style="margin-top:10px;">Closest match — ${calc.remaining} ${calcUnit} per side can't be made with standard plates.</div>`;
     }
     resultDiv.innerHTML = html;
+  }
+
+  function renderPlanTab(app) {
+    const intro = el('div', 'card');
+    intro.appendChild(el('h2', null, 'YOUR A/B PLAN'));
+    intro.appendChild(el('div', 'empty-state', 'Build your own Workout A and Workout B below — these become your personal targets and next-workout schedule.'));
+    app.appendChild(intro);
+
+    ['A', 'B'].forEach(type => {
+      const card = el('div', 'card');
+      card.appendChild(el('h2', null, `WORKOUT ${type}`));
+      const list = workoutPlans[type] || [];
+      if (!list.length) {
+        card.appendChild(el('div', 'empty-state', 'No exercises yet — add your first one below.'));
+      } else {
+        list.forEach((p, idx) => {
+          const row = el('div', 'entry');
+          const main = el('div', 'entry-main');
+          main.appendChild(el('div', 'entry-ex', p.name));
+          const detail = p.weight != null
+            ? `${p.weight} ${p.unit} × ${p.reps} × ${p.sets}`
+            : `${p.reps || '—'} reps × ${p.sets || '—'} sets · no weight target`;
+          main.appendChild(el('div', 'entry-detail', detail));
+          row.appendChild(main);
+          const del = el('button', 'del-btn', '×');
+          del.onclick = async () => {
+            workoutPlans[type].splice(idx, 1);
+            await savePlan();
+            render();
+          };
+          row.appendChild(del);
+          card.appendChild(row);
+        });
+      }
+
+      const nameField = el('div', 'field');
+      nameField.innerHTML = `<label>Exercise Name</label><input type="text" id="plan-name-${type}" placeholder="e.g. Incline Bench" autocomplete="off">`;
+      card.appendChild(nameField);
+
+      const row3 = el('div', 'row3');
+      row3.innerHTML = `
+        <div class="field"><label>Weight</label><input type="number" id="plan-weight-${type}" placeholder="optional" min="0" step="0.5"></div>
+        <div class="field"><label>Reps</label><input type="number" id="plan-reps-${type}" placeholder="0" min="0"></div>
+        <div class="field"><label>Sets</label><input type="number" id="plan-sets-${type}" placeholder="0" min="1" value="3"></div>
+      `;
+      card.appendChild(row3);
+
+      const unitField = el('div', 'field');
+      unitField.appendChild(el('label', null, 'Unit'));
+      const select = document.createElement('select');
+      ['lb', 'kg'].forEach(u => {
+        const opt = document.createElement('option');
+        opt.value = u; opt.textContent = u;
+        select.appendChild(opt);
+      });
+      select.id = `plan-unit-${type}`;
+      unitField.appendChild(select);
+      card.appendChild(unitField);
+
+      const addBtn = el('button', 'log-btn', `ADD TO WORKOUT ${type}`);
+      addBtn.onclick = async () => {
+        const name = document.getElementById(`plan-name-${type}`).value.trim();
+        const weightRaw = document.getElementById(`plan-weight-${type}`).value;
+        const reps = parseInt(document.getElementById(`plan-reps-${type}`).value) || 0;
+        const sets = parseInt(document.getElementById(`plan-sets-${type}`).value) || 1;
+        const unit = document.getElementById(`plan-unit-${type}`).value;
+        if (!name || reps <= 0) return;
+        const weight = weightRaw ? parseFloat(weightRaw) : null;
+        if (!workoutPlans[type]) workoutPlans[type] = [];
+        workoutPlans[type].push({ name, weight, unit, reps, sets });
+        await savePlan();
+        render();
+      };
+      card.appendChild(addBtn);
+
+      app.appendChild(card);
+    });
   }
 
   function renderPlatesTab(app) {
@@ -927,14 +1047,21 @@
     const tabBar = el('div', 'tab-bar');
     const trackerTabBtn = el('button', 'tab-btn' + (currentTab === 'tracker' ? ' active' : ''), 'TRACKER');
     trackerTabBtn.onclick = () => { currentTab = 'tracker'; render(); };
+    const planTabBtn = el('button', 'tab-btn' + (currentTab === 'plan' ? ' active' : ''), 'PLAN');
+    planTabBtn.onclick = () => { currentTab = 'plan'; render(); };
     const platesTabBtn = el('button', 'tab-btn' + (currentTab === 'plates' ? ' active' : ''), 'PLATE CALC');
     platesTabBtn.onclick = () => { currentTab = 'plates'; render(); };
     tabBar.appendChild(trackerTabBtn);
+    tabBar.appendChild(planTabBtn);
     tabBar.appendChild(platesTabBtn);
     app.appendChild(tabBar);
 
     if (currentTab === 'plates') {
       renderPlatesTab(app);
+      return;
+    }
+    if (currentTab === 'plan') {
+      renderPlanTab(app);
       return;
     }
 
@@ -987,7 +1114,16 @@
     nwTitle.style.fontSize = '17px';
     nwTitle.style.marginBottom = '10px';
     nextCard.appendChild(nwTitle);
-    WORKOUT_PLANS[nw.type].forEach(p => {
+    if (!workoutPlans[nw.type] || !workoutPlans[nw.type].length) {
+      const empty = el('div', 'empty-state', "You haven't built this workout yet. Head to the Plan tab to add exercises.");
+      nextCard.appendChild(empty);
+      const goToPlan = el('button', 'log-btn', 'GO TO PLAN TAB');
+      goToPlan.style.marginTop = '10px';
+      goToPlan.onclick = () => { currentTab = 'plan'; render(); };
+      nextCard.appendChild(goToPlan);
+      app.appendChild(nextCard);
+    } else {
+    workoutPlans[nw.type].forEach(p => {
       const matches = entries.filter(e => e.exercise.toLowerCase() === p.name.toLowerCase()).sort((a, b) => b.ts - a.ts);
       const last = matches[0];
       const doneToday = nw.inProgress && matches.some(e => e.date === nw.date);
@@ -1016,6 +1152,7 @@
       nextCard.appendChild(completeBtn);
     }
     app.appendChild(nextCard);
+    }
 
     const addCard = el('div', 'card');
     addCard.appendChild(el('h2', null, 'LOG A SET'));
@@ -1201,6 +1338,7 @@
     } else {
       document.getElementById('app').innerHTML = '<div class="loading">Loading your log…</div>';
       await loadEntries();
+      await loadPlan();
       render();
     }
   }
