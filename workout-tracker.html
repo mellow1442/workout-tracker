@@ -426,16 +426,24 @@
         planRowExists = true;
       } else {
         planRowExists = false;
-        const namesLogged = new Set(entries.map(e => e.exercise.toLowerCase()));
-        const legacyNames = [...DEFAULT_LEGACY_PLAN.A, ...DEFAULT_LEGACY_PLAN.B].map(p => p.name.toLowerCase());
-        const matchCount = legacyNames.filter(n => namesLogged.has(n)).length;
-        if (matchCount >= 3) {
-          workoutPlans = JSON.parse(JSON.stringify(DEFAULT_LEGACY_PLAN));
-          await savePlan();
-        } else {
-          workoutPlans = { A: [], B: [] };
-        }
+        workoutPlans = { A: [], B: [] };
       }
+      // Per-type legacy backfill: fills in any workout (A or B) that's still empty
+      // if enough of its exercises show up in your logged history, even if the
+      // other workout already has data or a plan row already exists.
+      const namesLogged = new Set(entries.map(e => e.exercise.toLowerCase()));
+      let changed = false;
+      ['A', 'B'].forEach(type => {
+        if (!workoutPlans[type] || !workoutPlans[type].length) {
+          const legacyNames = DEFAULT_LEGACY_PLAN[type].map(p => p.name.toLowerCase());
+          const matchCount = legacyNames.filter(n => namesLogged.has(n)).length;
+          if (matchCount >= 2) {
+            workoutPlans[type] = JSON.parse(JSON.stringify(DEFAULT_LEGACY_PLAN[type]));
+            changed = true;
+          }
+        }
+      });
+      if (changed) await savePlan();
     } catch (e) {
       console.error('Failed to load plan', e);
       workoutPlans = { A: [], B: [] };
