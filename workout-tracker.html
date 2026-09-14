@@ -394,7 +394,6 @@
   let restRunning = false;
   let restIntervalId = null;
   let workoutPlans = { A: [], B: [] };
-  let planRowExists = false;
 
   const DEFAULT_LEGACY_PLAN = {
     A: [
@@ -423,9 +422,7 @@
       if (error) throw error;
       if (data && data.plan) {
         workoutPlans = data.plan;
-        planRowExists = true;
       } else {
-        planRowExists = false;
         workoutPlans = { A: [], B: [] };
       }
       // Per-type legacy backfill: fills in any workout (A or B) that's still empty
@@ -452,14 +449,11 @@
 
   async function savePlan() {
     try {
-      if (planRowExists) {
-        const { error } = await sb.from('user_plans').update({ plan: workoutPlans }).eq('user_id', session.user.id);
-        if (error) throw error;
-      } else {
-        const { error } = await sb.from('user_plans').insert({ user_id: session.user.id, plan: workoutPlans });
-        if (error) throw error;
-        planRowExists = true;
-      }
+      const { error } = await sb.from('user_plans').upsert(
+        { user_id: session.user.id, plan: workoutPlans },
+        { onConflict: 'user_id' }
+      );
+      if (error) throw error;
     } catch (e) {
       console.error('Failed to save plan', e);
       alert('Could not save your plan:\n\n' + (e.message || JSON.stringify(e)));
