@@ -477,6 +477,22 @@
     return best > 0 ? best : planEntry.weight;
   }
 
+  function targetDetailsFor(planEntry) {
+    const weight = targetWeightFor(planEntry);
+    let reps = planEntry.reps;
+    let sets = planEntry.sets;
+    if (reps == null || sets == null) {
+      const mostRecent = entries
+        .filter(e => e.exercise.toLowerCase() === planEntry.name.toLowerCase())
+        .sort((a, b) => b.ts - a.ts)[0];
+      if (mostRecent) {
+        if (reps == null) reps = mostRecent.reps;
+        if (sets == null) sets = mostRecent.sets;
+      }
+    }
+    return { weight, reps, sets };
+  }
+
   function getOverride() {
     try {
       const raw = localStorage.getItem('workout-override');
@@ -1129,8 +1145,8 @@
       const matches = entries.filter(e => e.exercise.toLowerCase() === p.name.toLowerCase()).sort((a, b) => b.ts - a.ts);
       const last = matches[0];
       const doneToday = nw.inProgress && matches.some(e => e.date === nw.date);
-      const target = targetWeightFor(p);
-      const targetStr = target != null ? `Target: ${target} ${p.unit} × ${p.reps} × ${p.sets}` : 'No target set yet';
+      const td = targetDetailsFor(p);
+      const targetStr = td.weight != null ? `Target: ${td.weight} ${p.unit} × ${td.reps != null ? td.reps : '—'} × ${td.sets != null ? td.sets : '—'}` : 'No target set yet';
       const lastStr = last ? ` · Last: ${last.weight} ${last.unit} × ${last.reps}` : '';
       const row = el('div', 'entry');
       row.style.cursor = 'pointer';
@@ -1143,7 +1159,7 @@
       const goBtn = el('button', 'del-btn', '+');
       goBtn.style.color = 'var(--accent)';
       goBtn.style.fontSize = '22px';
-      goBtn.onclick = () => fillFromPlan(p.name, target != null ? target : (last ? last.weight : null), p.reps, p.sets);
+      goBtn.onclick = () => fillFromPlan(p.name, td.weight != null ? td.weight : (last ? last.weight : null), td.reps, td.sets);
       row.appendChild(goBtn);
       nextCard.appendChild(row);
     });
@@ -1258,12 +1274,12 @@
           const delta = Math.round((latestWeight - firstWeight) * 10) / 10;
           const unit = sessions[0].unit;
           const plan = planFor(selectedExercise);
-          const target = plan ? targetWeightFor(plan) : null;
+          const td = plan ? targetDetailsFor(plan) : null;
 
-          if (target != null) {
-            const vsTarget = Math.round((latestWeight - target) * 10) / 10;
+          if (td && td.weight != null) {
+            const vsTarget = Math.round((latestWeight - td.weight) * 10) / 10;
             const vsLabel = vsTarget > 0 ? `${vsTarget} ${unit} above target` : vsTarget < 0 ? `${Math.abs(vsTarget)} ${unit} below target` : 'right on target';
-            progressCard.appendChild(el('div', 'entry-detail', `Target: ${target} ${plan.unit} × ${plan.reps} × ${plan.sets} — currently ${vsLabel}`));
+            progressCard.appendChild(el('div', 'entry-detail', `Target: ${td.weight} ${plan.unit} × ${td.reps != null ? td.reps : '—'} × ${td.sets != null ? td.sets : '—'} — currently ${vsLabel}`));
           }
 
           const statsRow = el('div');
