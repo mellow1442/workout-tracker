@@ -561,10 +561,34 @@
     if (btn) btn.textContent = restRunning ? 'CANCEL' : 'START 1:30 REST';
   }
 
+  let audioCtx = null;
+  function getAudioCtx() {
+    if (!audioCtx) {
+      try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { audioCtx = null; }
+    }
+    return audioCtx;
+  }
+  function unlockAudio() {
+    const ctx = getAudioCtx();
+    if (!ctx) return;
+    if (ctx.state === 'suspended') { ctx.resume(); }
+    // Play a near-silent blip right now, during the tap, so iOS treats this
+    // context as user-initiated and allows sound from it later on.
+    try {
+      const osc = ctx.createOscillator(), gain = ctx.createGain();
+      gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+      osc.connect(gain); gain.connect(ctx.destination);
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + 0.05);
+    } catch (e) {}
+  }
+
   function alertRestDone() {
     try { if (navigator.vibrate) navigator.vibrate([250, 120, 250, 120, 250]); } catch (e) {}
     try {
-      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const ctx = getAudioCtx();
+      if (!ctx) return;
+      if (ctx.state === 'suspended') { ctx.resume(); }
       [0, 0.35, 0.7].forEach(t => {
         const osc = ctx.createOscillator(), gain = ctx.createGain();
         osc.type = 'sine'; osc.frequency.value = 880;
@@ -585,6 +609,7 @@
 
   function startRest() {
     if (restRunning) { cancelRest(); return; }
+    unlockAudio();
     restRemaining = 90;
     restRunning = true;
     updateRestUI();
