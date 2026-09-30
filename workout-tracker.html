@@ -388,6 +388,7 @@
   let openDay = null;
   let selectedExercise = null;
   let currentTab = 'tracker';
+  let editingIndex = { A: null, B: null };
   let calcUnit = 'lbs';
   let calcTotalValue = '';
   let restRemaining = 90;
@@ -745,27 +746,49 @@
             ? `${p.weight} ${p.unit} × ${p.reps} × ${p.sets}`
             : `${p.reps || '—'} reps × ${p.sets || '—'} sets · no weight target`;
           main.appendChild(el('div', 'entry-detail', detail));
+          if (p.video) {
+            const vidLink = el('a', 'entry-detail', '▶ Form video linked');
+            vidLink.href = p.video;
+            vidLink.target = '_blank';
+            vidLink.style.color = 'var(--accent)';
+            vidLink.style.textDecoration = 'none';
+            main.appendChild(vidLink);
+          }
           row.appendChild(main);
+          const btnGroup = el('div');
+          btnGroup.style.cssText = 'display:flex; gap:6px;';
+          const editBtn = el('button', 'del-btn', '✎');
+          editBtn.style.color = 'var(--text-muted)';
+          editBtn.style.fontSize = '18px';
+          editBtn.onclick = () => { editingIndex[type] = idx; render(); };
+          btnGroup.appendChild(editBtn);
           const del = el('button', 'del-btn', '×');
           del.onclick = async () => {
             workoutPlans[type].splice(idx, 1);
+            if (editingIndex[type] === idx) editingIndex[type] = null;
             await savePlan();
             render();
           };
-          row.appendChild(del);
+          btnGroup.appendChild(del);
+          row.appendChild(btnGroup);
           card.appendChild(row);
         });
       }
 
+      const isEditing = editingIndex[type] != null && workoutPlans[type] && workoutPlans[type][editingIndex[type]];
+      const editTarget = isEditing ? workoutPlans[type][editingIndex[type]] : null;
+
+      card.appendChild(el('h2', null, isEditing ? `EDIT EXERCISE` : 'ADD EXERCISE'));
+
       const nameField = el('div', 'field');
-      nameField.innerHTML = `<label>Exercise Name</label><input type="text" id="plan-name-${type}" placeholder="e.g. Incline Bench" autocomplete="off">`;
+      nameField.innerHTML = `<label>Exercise Name</label><input type="text" id="plan-name-${type}" placeholder="e.g. Incline Bench" autocomplete="off" value="${isEditing ? editTarget.name.replace(/"/g, '&quot;') : ''}">`;
       card.appendChild(nameField);
 
       const row3 = el('div', 'row3');
       row3.innerHTML = `
-        <div class="field"><label>Weight</label><input type="number" id="plan-weight-${type}" placeholder="optional" min="0" step="0.5"></div>
-        <div class="field"><label>Reps</label><input type="number" id="plan-reps-${type}" placeholder="0" min="0"></div>
-        <div class="field"><label>Sets</label><input type="number" id="plan-sets-${type}" placeholder="0" min="1" value="3"></div>
+        <div class="field"><label>Weight</label><input type="number" id="plan-weight-${type}" placeholder="optional" min="0" step="0.5" value="${isEditing && editTarget.weight != null ? editTarget.weight : ''}"></div>
+        <div class="field"><label>Reps</label><input type="number" id="plan-reps-${type}" placeholder="0" min="0" value="${isEditing && editTarget.reps != null ? editTarget.reps : ''}"></div>
+        <div class="field"><label>Sets</label><input type="number" id="plan-sets-${type}" placeholder="0" min="1" value="${isEditing && editTarget.sets != null ? editTarget.sets : 3}"></div>
       `;
       card.appendChild(row3);
 
@@ -775,27 +798,46 @@
       ['lb', 'kg'].forEach(u => {
         const opt = document.createElement('option');
         opt.value = u; opt.textContent = u;
+        if (isEditing && normalizeUnit(editTarget.unit) === normalizeUnit(u)) opt.selected = true;
         select.appendChild(opt);
       });
       select.id = `plan-unit-${type}`;
       unitField.appendChild(select);
       card.appendChild(unitField);
 
-      const addBtn = el('button', 'log-btn', `ADD TO WORKOUT ${type}`);
+      const videoField = el('div', 'field');
+      videoField.innerHTML = `<label>Form Video Link (optional)</label><input type="text" id="plan-video-${type}" placeholder="Paste a YouTube link, e.g. Mehdi / StrongLifts" autocomplete="off" value="${isEditing && editTarget.video ? editTarget.video.replace(/"/g, '&quot;') : ''}">`;
+      card.appendChild(videoField);
+
+      const addBtn = el('button', 'log-btn', isEditing ? 'SAVE CHANGES' : `ADD TO WORKOUT ${type}`);
       addBtn.onclick = async () => {
         const name = document.getElementById(`plan-name-${type}`).value.trim();
         const weightRaw = document.getElementById(`plan-weight-${type}`).value;
         const reps = parseInt(document.getElementById(`plan-reps-${type}`).value) || 0;
         const sets = parseInt(document.getElementById(`plan-sets-${type}`).value) || 1;
         const unit = document.getElementById(`plan-unit-${type}`).value;
+        const video = document.getElementById(`plan-video-${type}`).value.trim();
         if (!name || reps <= 0) return;
         const weight = weightRaw ? parseFloat(weightRaw) : null;
         if (!workoutPlans[type]) workoutPlans[type] = [];
-        workoutPlans[type].push({ name, weight, unit, reps, sets });
+        const updated = { name, weight, unit, reps, sets, video: video || null };
+        if (isEditing) {
+          workoutPlans[type][editingIndex[type]] = updated;
+          editingIndex[type] = null;
+        } else {
+          workoutPlans[type].push(updated);
+        }
         await savePlan();
         render();
       };
       card.appendChild(addBtn);
+
+      if (isEditing) {
+        const cancelBtn = el('button', null, 'Cancel edit');
+        cancelBtn.style.cssText = 'background:none; border:none; color:var(--text-muted); font-size:12px; text-decoration:underline; padding:10px 0 0; width:100%;';
+        cancelBtn.onclick = () => { editingIndex[type] = null; render(); };
+        card.appendChild(cancelBtn);
+      }
 
       app.appendChild(card);
     });
@@ -1180,6 +1222,14 @@
       if (doneToday) nameLine.appendChild(el('span', 'pr-badge', 'DONE'));
       main.appendChild(nameLine);
       main.appendChild(el('div', 'entry-detail', targetStr + lastStr));
+      if (p.video) {
+        const vidLink = el('a', 'entry-detail', '▶ Watch Form');
+        vidLink.href = p.video;
+        vidLink.target = '_blank';
+        vidLink.style.color = 'var(--accent)';
+        vidLink.style.textDecoration = 'none';
+        main.appendChild(vidLink);
+      }
       row.appendChild(main);
       const goBtn = el('button', 'del-btn', '+');
       goBtn.style.color = 'var(--accent)';
