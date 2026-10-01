@@ -505,8 +505,27 @@
     catch (e) {}
   }
 
+  function getTodayChoice() {
+    try {
+      const raw = localStorage.getItem('workout-today-choice');
+      const parsed = raw ? JSON.parse(raw) : null;
+      return (parsed && parsed.date === todayStr()) ? parsed.type : null;
+    } catch (e) { return null; }
+  }
+  function setTodayChoice(type) {
+    try { localStorage.setItem('workout-today-choice', JSON.stringify({ type, date: todayStr() })); }
+    catch (e) {}
+  }
+  function clearTodayChoice() {
+    try { localStorage.removeItem('workout-today-choice'); } catch (e) {}
+  }
+
   function currentOrNextWorkout() {
     const today = todayStr();
+    const manualChoice = getTodayChoice();
+    if (manualChoice) {
+      return { type: manualChoice, date: today, inProgress: true, manual: true };
+    }
     const override = getOverride();
     if (override && override.date === today) {
       const [y, m, d] = override.date.split('-').map(Number);
@@ -1197,8 +1216,23 @@
     nextCard.appendChild(el('h2', null, nw.inProgress ? "TODAY'S WORKOUT" : 'NEXT WORKOUT'));
     const nwTitle = el('div', 'entry-ex', `Workout ${nw.type} · ${formatUpcoming(nw.date)}`);
     nwTitle.style.fontSize = '17px';
-    nwTitle.style.marginBottom = '10px';
+    nwTitle.style.marginBottom = '6px';
     nextCard.appendChild(nwTitle);
+
+    const otherType = nw.type === 'A' ? 'B' : 'A';
+    const switchRow = el('div');
+    switchRow.style.cssText = 'margin-bottom:12px;';
+    const switchBtn = el('button', null, `Switch to Workout ${otherType}`);
+    switchBtn.style.cssText = 'background:none; border:1px solid var(--border); color:var(--text-muted); padding:5px 10px; border-radius:999px; font-size:11px;';
+    switchBtn.onclick = () => { setTodayChoice(otherType); render(); };
+    switchRow.appendChild(switchBtn);
+    if (nw.manual) {
+      const resetBtn = el('button', null, 'Reset to automatic');
+      resetBtn.style.cssText = 'background:none; border:none; color:var(--text-muted); font-size:11px; text-decoration:underline; margin-left:10px; padding:5px 0;';
+      resetBtn.onclick = () => { clearTodayChoice(); render(); };
+      switchRow.appendChild(resetBtn);
+    }
+    nextCard.appendChild(switchRow);
     if (!workoutPlans[nw.type] || !workoutPlans[nw.type].length) {
       const empty = el('div', 'empty-state', "You haven't built this workout yet. Head to the Plan tab to add exercises.");
       nextCard.appendChild(empty);
@@ -1241,7 +1275,7 @@
     if (nw.inProgress) {
       const completeBtn = el('button', 'log-btn', 'COMPLETE WORKOUT');
       completeBtn.style.marginTop = '10px';
-      completeBtn.onclick = () => { setOverride(nw.type); render(); };
+      completeBtn.onclick = () => { clearTodayChoice(); setOverride(nw.type); render(); };
       nextCard.appendChild(completeBtn);
     }
     app.appendChild(nextCard);
