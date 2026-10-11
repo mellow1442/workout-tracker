@@ -775,7 +775,31 @@
           }
           row.appendChild(main);
           const btnGroup = el('div');
-          btnGroup.style.cssText = 'display:flex; gap:6px;';
+          btnGroup.style.cssText = 'display:flex; gap:4px; align-items:center;';
+          const upBtn = el('button', 'del-btn', '▲');
+          upBtn.style.color = idx === 0 ? 'var(--border)' : 'var(--text-muted)';
+          upBtn.style.fontSize = '14px';
+          upBtn.disabled = idx === 0;
+          upBtn.onclick = async () => {
+            if (idx === 0) return;
+            const arr = workoutPlans[type];
+            [arr[idx - 1], arr[idx]] = [arr[idx], arr[idx - 1]];
+            await savePlan();
+            render();
+          };
+          btnGroup.appendChild(upBtn);
+          const downBtn = el('button', 'del-btn', '▼');
+          downBtn.style.color = idx === list.length - 1 ? 'var(--border)' : 'var(--text-muted)';
+          downBtn.style.fontSize = '14px';
+          downBtn.disabled = idx === list.length - 1;
+          downBtn.onclick = async () => {
+            if (idx === list.length - 1) return;
+            const arr = workoutPlans[type];
+            [arr[idx], arr[idx + 1]] = [arr[idx + 1], arr[idx]];
+            await savePlan();
+            render();
+          };
+          btnGroup.appendChild(downBtn);
           const editBtn = el('button', 'del-btn', '✎');
           editBtn.style.color = 'var(--text-muted)';
           editBtn.style.fontSize = '18px';
