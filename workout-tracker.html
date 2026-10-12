@@ -21,6 +21,19 @@
     --danger: #E2574C;
   }
 
+  body.light-theme {
+    --bg: #F6F3EC;
+    --surface: #FFFFFF;
+    --surface-alt: #F0EBDF;
+    --border: #E0D9C8;
+    --text: #1C1A16;
+    --text-muted: #6E6A5E;
+    --accent: #D98A2B;
+    --accent-dim: #F0D4A8;
+    --pr: #1F9268;
+    --danger: #C5392F;
+  }
+
   * { box-sizing: border-box; }
 
   body {
@@ -389,8 +402,21 @@
   let selectedExercise = null;
   let currentTab = 'tracker';
   let editingIndex = { A: null, B: null };
+  let logSuccess = true;
+  let theme = 'dark';
+
+  function loadTheme() {
+    try { theme = localStorage.getItem('workout-theme') || 'dark'; } catch (e) { theme = 'dark'; }
+    document.body.classList.toggle('light-theme', theme === 'light');
+  }
+  function toggleTheme() {
+    theme = theme === 'light' ? 'dark' : 'light';
+    try { localStorage.setItem('workout-theme', theme); } catch (e) {}
+    document.body.classList.toggle('light-theme', theme === 'light');
+  }
   let calcUnit = 'lbs';
   let calcTotalValue = '';
+  let warmupTotalValue = '';
   let restRemaining = 90;
   let restRunning = false;
   let restIntervalId = null;
@@ -478,8 +504,39 @@
     return best > 0 ? best : planEntry.weight;
   }
 
+  // Auto-progression: suggests next weight based on whether the last session
+  // at that exercise was a success, a single miss (retry same weight), or
+  // repeated misses at the same weight (suggest a 10% deload).
+  function suggestedWeightFor(planEntry) {
+    const history = entries
+      .filter(e => e.exercise.toLowerCase() === planEntry.name.toLowerCase() && normalizeUnit(e.unit) === normalizeUnit(planEntry.unit))
+      .sort((a, b) => b.ts - a.ts);
+    if (!history.length) return { weight: planEntry.weight, note: null };
+    const increment = planEntry.increment != null ? planEntry.increment : (normalizeUnit(planEntry.unit) === 'kg' ? 2.5 : 5);
+    // Collapse to one result per date (most recent set logged that day)
+    const byDate = [];
+    const seen = new Set();
+    for (const e of history) {
+      if (!seen.has(e.date)) { seen.add(e.date); byDate.push(e); }
+    }
+    const last = byDate[0];
+    const lastSuccess = last.success !== false; // undefined/null (old data) counts as success
+    if (!lastSuccess) {
+      const recentFailsSameWeight = byDate.slice(0, 3).filter(e => e.success === false && e.weight === last.weight);
+      if (recentFailsSameWeight.length >= 2) {
+        let deloaded = Math.round((last.weight * 0.9) / 2.5) * 2.5;
+        if (deloaded >= last.weight) deloaded = last.weight - 2.5;
+        return { weight: deloaded, note: `Deload suggested — missed ${recentFailsSameWeight.length}x at ${last.weight} ${planEntry.unit}` };
+      }
+      return { weight: last.weight, note: 'Retry — same weight as your last attempt' };
+    }
+    return { weight: Math.round((last.weight + increment) * 10) / 10, note: `+${increment} ${planEntry.unit} since your last successful session` };
+  }
+
   function targetDetailsFor(planEntry) {
-    const weight = targetWeightFor(planEntry);
+    const suggestion = suggestedWeightFor(planEntry);
+    let weight = suggestion.weight;
+    if (weight == null) weight = targetWeightFor(planEntry);
     let reps = planEntry.reps;
     let sets = planEntry.sets;
     if (reps == null || sets == null) {
@@ -491,7 +548,7 @@
         if (sets == null) sets = mostRecent.sets;
       }
     }
-    return { weight, reps, sets };
+    return { weight, reps, sets, note: suggestion.note };
   }
 
   function getOverride() {
@@ -867,6 +924,10 @@
       videoField.innerHTML = `<label>Form Video Link (optional)</label><input type="text" id="plan-video-${type}" placeholder="Paste a YouTube link, e.g. Mehdi / StrongLifts" autocomplete="off" value="${isEditing && editTarget.video ? editTarget.video.replace(/"/g, '&quot;') : ''}">`;
       card.appendChild(videoField);
 
+      const incField = el('div', 'field');
+      incField.innerHTML = `<label>Weight Increase After a Success (optional)</label><input type="number" id="plan-inc-${type}" placeholder="default: 5 lb / 2.5 kg" min="0" step="0.5" value="${isEditing && editTarget.increment != null ? editTarget.increment : ''}">`;
+      card.appendChild(incField);
+
       const addBtn = el('button', 'log-btn', isEditing ? 'SAVE CHANGES' : `ADD TO WORKOUT ${type}`);
       addBtn.onclick = async () => {
         const name = document.getElementById(`plan-name-${type}`).value.trim();
@@ -875,10 +936,12 @@
         const sets = parseInt(document.getElementById(`plan-sets-${type}`).value) || 1;
         const unit = document.getElementById(`plan-unit-${type}`).value;
         const video = document.getElementById(`plan-video-${type}`).value.trim();
+        const incRaw = document.getElementById(`plan-inc-${type}`).value;
         if (!name || reps <= 0) return;
         const weight = weightRaw ? parseFloat(weightRaw) : null;
+        const increment = incRaw ? parseFloat(incRaw) : null;
         if (!workoutPlans[type]) workoutPlans[type] = [];
-        const updated = { name, weight, unit, reps, sets, video: video || null };
+        const updated = { name, weight, unit, reps, sets, video: video || null, increment };
         if (isEditing) {
           workoutPlans[type][editingIndex[type]] = updated;
           editingIndex[type] = null;
@@ -899,6 +962,50 @@
 
       app.appendChild(card);
     });
+  }
+
+  function warmupSets(workingWeight, unit) {
+    const bar = BAR_WEIGHTS[unit];
+    const steps = [
+      { pct: 0, reps: 8 },
+      { pct: 0.5, reps: 5 },
+      { pct: 0.7, reps: 3 },
+      { pct: 0.85, reps: 2 },
+      { pct: 0.95, reps: 1 }
+    ];
+    const rounded = w => Math.max(bar, Math.round(w / 2.5) * 2.5);
+    const out = [];
+    steps.forEach(s => {
+      const w = s.pct === 0 ? bar : rounded(workingWeight * s.pct);
+      if (!out.length || w > out[out.length - 1].weight) {
+        out.push({ weight: w, reps: s.reps });
+      }
+    });
+    if (!out.length || out[out.length - 1].weight < workingWeight) {
+      // working weight itself isn't one of the ramp steps, fine — it's the top set
+    }
+    return out;
+  }
+
+  function updateWarmupResults() {
+    const input = document.getElementById('warmup-total');
+    const resultDiv = document.getElementById('warmup-result');
+    if (!input || !resultDiv) return;
+    warmupTotalValue = input.value;
+    const total = parseFloat(input.value);
+    if (!total || isNaN(total)) {
+      resultDiv.innerHTML = '<div class="empty-state">Enter your working weight to see a warm-up ramp.</div>';
+      return;
+    }
+    const sets = warmupSets(total, calcUnit);
+    let html = '';
+    sets.forEach((s, idx) => {
+      const calc = calculatePlates(s.weight, calcUnit);
+      const plateStr = calc.used && calc.used.length ? calc.used.map(v => v + calcUnit).join('+') : 'bar only';
+      html += `<div class="entry"><div class="entry-main"><div class="entry-ex">Warm-up ${idx + 1}</div><div class="entry-detail">${s.weight} ${calcUnit} × ${s.reps} reps · ${plateStr} per side</div></div></div>`;
+    });
+    html += `<div class="entry"><div class="entry-main"><div class="entry-ex">Working Set</div><div class="entry-detail">${total} ${calcUnit} — go time</div></div></div>`;
+    resultDiv.innerHTML = html;
   }
 
   function renderPlatesTab(app) {
@@ -970,6 +1077,31 @@
     equipCard.appendChild(grid);
     equipCard.appendChild(el('div', 'date-line', 'Count both plates in a pair — e.g. enter 2 if you own one pair of 45s.'));
     app.appendChild(equipCard);
+
+    // Warm-up calculator
+    const warmCard = el('div', 'card');
+    warmCard.appendChild(el('h2', null, 'WARM-UP CALCULATOR'));
+    warmCard.appendChild(el('div', 'date-line', "Enter today's working weight to get a ramp-up sequence."));
+    const warmField = el('div', 'field');
+    warmField.style.marginTop = '10px';
+    warmField.appendChild(el('label', null, 'Working Weight'));
+    const warmInput = document.createElement('input');
+    warmInput.type = 'number';
+    warmInput.id = 'warmup-total';
+    warmInput.inputMode = 'decimal';
+    warmInput.placeholder = 'e.g. 185';
+    warmInput.min = '0';
+    warmInput.step = '2.5';
+    warmInput.value = warmupTotalValue;
+    warmInput.oninput = updateWarmupResults;
+    warmField.appendChild(warmInput);
+    warmCard.appendChild(warmField);
+    const warmResult = el('div');
+    warmResult.id = 'warmup-result';
+    warmResult.style.marginTop = '10px';
+    warmCard.appendChild(warmResult);
+    app.appendChild(warmCard);
+    updateWarmupResults();
   }
 
   function loadPrefs() {
@@ -997,6 +1129,8 @@
         date: r.date,
         volume: r.volume,
         isPR: r.is_pr,
+        success: r.success,
+        note: r.note || '',
         ts: r.created_at ? new Date(r.created_at).getTime() : Date.now()
       }));
     } catch (e) {
@@ -1042,6 +1176,169 @@
     return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="120" preserveAspectRatio="none">${line}${circles}</svg>`;
   }
 
+  function buildTrendChartSVG(values) {
+    const w = 300, h = 110, pad = 12;
+    const max = Math.max(...values);
+    const min = Math.min(...values);
+    const range = (max - min) || 1;
+    const stepX = values.length > 1 ? (w - 2 * pad) / (values.length - 1) : 0;
+    const pts = values.map((v, i) => {
+      const x = values.length > 1 ? pad + i * stepX : w / 2;
+      const y = h - pad - ((v - min) / range) * (h - 2 * pad);
+      return [x, y];
+    });
+    const polyline = pts.map(p => p.join(',')).join(' ');
+    const circles = pts.map(([x, y]) => `<circle cx="${x}" cy="${y}" r="3.5" style="fill:var(--accent)"></circle>`).join('');
+    const line = pts.length > 1
+      ? `<polyline points="${polyline}" fill="none" style="stroke:var(--accent);stroke-width:2"></polyline>`
+      : '';
+    return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="120" preserveAspectRatio="none">${line}${circles}</svg>`;
+  }
+
+  // ---------- Leaderboard ----------
+  let leaderboardRows = [];
+  let myDisplayName = '';
+
+  function myTotalVolume() { return entries.reduce((s, e) => s + (e.volume || 0), 0); }
+
+  async function loadLeaderboard() {
+    try {
+      const { data, error } = await sb.from('leaderboard').select('*').order('total_volume', { ascending: false }).limit(50);
+      if (error) throw error;
+      leaderboardRows = data || [];
+      const mine = leaderboardRows.find(r => r.user_id === session.user.id);
+      myDisplayName = mine ? mine.display_name : '';
+    } catch (e) {
+      console.error('Failed to load leaderboard', e);
+      leaderboardRows = [];
+    }
+  }
+
+  async function syncLeaderboard(displayName) {
+    try {
+      const { error } = await sb.from('leaderboard').upsert(
+        { user_id: session.user.id, display_name: displayName, total_volume: myTotalVolume(), updated_at: new Date().toISOString() },
+        { onConflict: 'user_id' }
+      );
+      if (error) throw error;
+      await loadLeaderboard();
+    } catch (e) {
+      console.error('Failed to update leaderboard', e);
+      alert('Could not update the leaderboard:\n\n' + (e.message || JSON.stringify(e)));
+    }
+  }
+
+  async function leaveLeaderboard() {
+    try {
+      const { error } = await sb.from('leaderboard').delete().eq('user_id', session.user.id);
+      if (error) throw error;
+      myDisplayName = '';
+      await loadLeaderboard();
+    } catch (e) {
+      console.error('Failed to leave leaderboard', e);
+    }
+  }
+
+  function renderBoardTab(app) {
+    const card = el('div', 'card');
+    card.appendChild(el('h2', null, 'LEADERBOARD'));
+    card.appendChild(el('div', 'date-line', 'Opt-in. Only your display name and total lifting volume are shared — never your email or workout details.'));
+
+    const nameField = el('div', 'field');
+    nameField.style.marginTop = '12px';
+    nameField.appendChild(el('label', null, 'Display Name'));
+    const nameInput = document.createElement('input');
+    nameInput.type = 'text';
+    nameInput.id = 'board-name';
+    nameInput.maxLength = 20;
+    nameInput.placeholder = 'e.g. IronMike';
+    nameInput.autocomplete = 'off';
+    nameInput.value = myDisplayName;
+    nameField.appendChild(nameInput);
+    card.appendChild(nameField);
+
+    const joined = !!myDisplayName;
+    const joinBtn = el('button', 'log-btn', joined ? 'UPDATE MY SCORE' : 'JOIN LEADERBOARD');
+    joinBtn.onclick = async () => {
+      const name = document.getElementById('board-name').value.trim();
+      if (!name) return;
+      joinBtn.disabled = true;
+      joinBtn.textContent = 'SAVING…';
+      await syncLeaderboard(name);
+      render();
+    };
+    card.appendChild(joinBtn);
+
+    if (joined) {
+      const leaveBtn = el('button', null, 'Leave leaderboard');
+      leaveBtn.style.cssText = 'background:none; border:none; color:var(--danger); font-size:11px; text-decoration:underline; padding:10px 0 0; width:100%;';
+      leaveBtn.onclick = async () => { await leaveLeaderboard(); render(); };
+      card.appendChild(leaveBtn);
+    }
+    app.appendChild(card);
+
+    const listCard = el('div', 'card');
+    listCard.appendChild(el('h2', null, 'RANKINGS · TOTAL VOLUME'));
+    if (!leaderboardRows.length) {
+      listCard.appendChild(el('div', 'empty-state', 'No one has joined yet. Be the first!'));
+    } else {
+      leaderboardRows.forEach((r, i) => {
+        const row = el('div', 'entry');
+        const main = el('div', 'entry-main');
+        const isMe = r.user_id === session.user.id;
+        const nameLine = el('div', 'entry-ex', `${i + 1}. ${r.display_name}`);
+        if (isMe) nameLine.appendChild(el('span', 'pr-badge', 'YOU'));
+        main.appendChild(nameLine);
+        row.appendChild(main);
+        row.appendChild(el('div', 'vol', Math.round(r.total_volume).toLocaleString() + ' vol'));
+        listCard.appendChild(row);
+      });
+    }
+    app.appendChild(listCard);
+  }
+
+  // ---------- Bodyweight tracking ----------
+  let bodyweightLogs = [];
+
+  async function loadBodyweight() {
+    try {
+      const { data, error } = await sb.from('bodyweight_logs').select('*').order('date', { ascending: true });
+      if (error) throw error;
+      bodyweightLogs = (data || []).map(r => ({ id: r.id, date: r.date, weight: r.weight, unit: r.unit }));
+    } catch (e) {
+      console.error('Failed to load bodyweight logs', e);
+      bodyweightLogs = [];
+    }
+  }
+
+  async function addBodyweight(weight, unit) {
+    const date = todayStr();
+    try {
+      const { data, error } = await sb.from('bodyweight_logs')
+        .upsert({ user_id: session.user.id, date, weight, unit }, { onConflict: 'user_id,date' })
+        .select().single();
+      if (error) throw error;
+      bodyweightLogs = bodyweightLogs.filter(b => b.date !== date);
+      bodyweightLogs.push({ id: data.id, date: data.date, weight: data.weight, unit: data.unit });
+      bodyweightLogs.sort((a, b) => a.date.localeCompare(b.date));
+      render();
+    } catch (e) {
+      console.error('Failed to save bodyweight', e);
+      alert('Could not save your weigh-in:\n\n' + (e.message || JSON.stringify(e)));
+    }
+  }
+
+  async function deleteBodyweight(id) {
+    try {
+      const { error } = await sb.from('bodyweight_logs').delete().eq('id', id);
+      if (error) throw error;
+      bodyweightLogs = bodyweightLogs.filter(b => b.id !== id);
+      render();
+    } catch (e) {
+      console.error('Failed to delete bodyweight entry', e);
+    }
+  }
+
   function bestWeightBefore(exercise, beforeId) {
     let max = 0;
     entries.forEach(e => {
@@ -1085,7 +1382,7 @@
     return Array.from(map.entries()).sort((a, b) => b[0].localeCompare(a[0]));
   }
 
-  async function addEntry(exercise, weight, reps, sets) {
+  async function addEntry(exercise, weight, reps, sets, success, note) {
     const unit = currentUnit();
     const prevBest = bestWeightBefore(exercise, null);
     const isPR = weight > prevBest && prevBest > 0;
@@ -1096,13 +1393,16 @@
         user_id: session.user.id,
         exercise: exercise.trim(),
         weight, reps, sets, unit, date, volume,
-        is_pr: isPR
+        is_pr: isPR,
+        success: success,
+        note: note || null
       }).select().single();
       if (error) throw error;
       entries.unshift({
         id: data.id, exercise: data.exercise, weight: data.weight, reps: data.reps,
         sets: data.sets, unit: data.unit, date: data.date, volume: data.volume,
-        isPR: data.is_pr, ts: new Date(data.created_at).getTime()
+        isPR: data.is_pr, success: data.success, note: data.note || '',
+        ts: new Date(data.created_at).getTime()
       });
       render();
     } catch (e) {
@@ -1214,10 +1514,16 @@
 
     const topBar = el('div', 'top-bar');
     const emailSpan = el('span', null, session && session.user ? session.user.email : '');
+    const rightGroup = el('div');
+    rightGroup.style.cssText = 'display:flex; gap:8px;';
+    const themeBtn = el('button', null, theme === 'light' ? '🌙' : '☀️');
+    themeBtn.onclick = () => { toggleTheme(); render(); };
     const logoutBtn = el('button', null, 'Log out');
     logoutBtn.onclick = async () => { await sb.auth.signOut(); };
+    rightGroup.appendChild(themeBtn);
+    rightGroup.appendChild(logoutBtn);
     topBar.appendChild(emailSpan);
-    topBar.appendChild(logoutBtn);
+    topBar.appendChild(rightGroup);
     app.appendChild(topBar);
 
     const tabBar = el('div', 'tab-bar');
@@ -1225,11 +1531,19 @@
     trackerTabBtn.onclick = () => { currentTab = 'tracker'; render(); };
     const planTabBtn = el('button', 'tab-btn' + (currentTab === 'plan' ? ' active' : ''), 'PLAN');
     planTabBtn.onclick = () => { currentTab = 'plan'; render(); };
-    const platesTabBtn = el('button', 'tab-btn' + (currentTab === 'plates' ? ' active' : ''), 'PLATE CALC');
+    const platesTabBtn = el('button', 'tab-btn' + (currentTab === 'plates' ? ' active' : ''), 'PLATES');
     platesTabBtn.onclick = () => { currentTab = 'plates'; render(); };
+    const boardTabBtn = el('button', 'tab-btn' + (currentTab === 'board' ? ' active' : ''), 'BOARD');
+    boardTabBtn.onclick = async () => {
+      currentTab = 'board';
+      render();
+      if (myDisplayName) { await syncLeaderboard(myDisplayName); } else { await loadLeaderboard(); }
+      if (currentTab === 'board') render();
+    };
     tabBar.appendChild(trackerTabBtn);
     tabBar.appendChild(planTabBtn);
     tabBar.appendChild(platesTabBtn);
+    tabBar.appendChild(boardTabBtn);
     app.appendChild(tabBar);
 
     if (currentTab === 'plates') {
@@ -1238,6 +1552,10 @@
     }
     if (currentTab === 'plan') {
       renderPlanTab(app);
+      return;
+    }
+    if (currentTab === 'board') {
+      renderBoardTab(app);
       return;
     }
 
@@ -1320,7 +1638,8 @@
       const doneToday = nw.inProgress && matches.some(e => e.date === nw.date);
       const td = targetDetailsFor(p);
       const targetStr = td.weight != null ? `Target: ${td.weight} ${p.unit} × ${td.reps != null ? td.reps : '—'} × ${td.sets != null ? td.sets : '—'}` : 'No target set yet';
-      const lastStr = last ? ` · Last: ${last.weight} ${last.unit} × ${last.reps}` : '';
+      const lastResultMark = last ? (last.success === false ? ' ✗' : last.success === true ? ' ✓' : '') : '';
+      const lastStr = last ? ` · Last: ${last.weight} ${last.unit} × ${last.reps}${lastResultMark}` : '';
       const row = el('div', 'entry');
       row.style.cursor = 'pointer';
       const main = el('div', 'entry-main');
@@ -1328,6 +1647,11 @@
       if (doneToday) nameLine.appendChild(el('span', 'pr-badge', 'DONE'));
       main.appendChild(nameLine);
       main.appendChild(el('div', 'entry-detail', targetStr + lastStr));
+      if (td.note) {
+        const noteLine = el('div', 'entry-detail', td.note);
+        noteLine.style.color = 'var(--pr)';
+        main.appendChild(noteLine);
+      }
       if (p.video) {
         const vidLink = el('a', 'entry-detail', '▶ Watch Form');
         vidLink.href = p.video;
@@ -1391,16 +1715,33 @@
     `;
     addCard.appendChild(row);
 
+    const successField = el('div', 'field');
+    successField.appendChild(el('label', null, 'Result'));
+    const successToggle = el('div', 'unit-toggle');
+    const hitBtn = el('button', logSuccess === true ? 'active' : '', '✓ Hit It');
+    hitBtn.onclick = () => { logSuccess = true; render(); };
+    const missBtn = el('button', logSuccess === false ? 'active' : '', '✗ Missed');
+    missBtn.onclick = () => { logSuccess = false; render(); };
+    successToggle.appendChild(hitBtn);
+    successToggle.appendChild(missBtn);
+    successField.appendChild(successToggle);
+    addCard.appendChild(successField);
+
+    const noteField = el('div', 'field');
+    noteField.innerHTML = `<label>Note (optional)</label><input type="text" id="f-note" placeholder="e.g. felt heavy, form breakdown on last rep" autocomplete="off">`;
+    addCard.appendChild(noteField);
+
     const logBtn = el('button', 'log-btn', 'LOG SET');
     logBtn.onclick = async () => {
       const exercise = document.getElementById('f-exercise').value.trim();
       const weight = parseFloat(document.getElementById('f-weight').value) || 0;
       const reps = parseInt(document.getElementById('f-reps').value) || 0;
       const sets = parseInt(document.getElementById('f-sets').value) || 1;
+      const note = document.getElementById('f-note').value.trim();
       if (!exercise || reps <= 0) return;
       logBtn.disabled = true;
       logBtn.textContent = 'SAVING…';
-      await addEntry(exercise, weight, reps, sets);
+      await addEntry(exercise, weight, reps, sets, logSuccess, note);
     };
     addCard.appendChild(logBtn);
     app.appendChild(addCard);
@@ -1480,6 +1821,73 @@
     }
     app.appendChild(progressCard);
 
+    // Bodyweight
+    const bwCard = el('div', 'card');
+    bwCard.appendChild(el('h2', null, 'BODYWEIGHT'));
+    const bwField = el('div', 'field');
+    bwField.innerHTML = `<label>Today's Weight</label><input type="number" id="bw-input" inputmode="decimal" placeholder="e.g. 185" min="0" step="0.1">`;
+    bwCard.appendChild(bwField);
+    const bwBtn = el('button', 'log-btn', 'LOG WEIGHT');
+    bwBtn.onclick = async () => {
+      const w = parseFloat(document.getElementById('bw-input').value);
+      if (!w) return;
+      bwBtn.disabled = true;
+      bwBtn.textContent = 'SAVING…';
+      await addBodyweight(w, prefs.unit);
+    };
+    bwCard.appendChild(bwBtn);
+    if (bodyweightLogs.length) {
+      const recent = bodyweightLogs.slice(-30);
+      const chartWrap = el('div', null, buildTrendChartSVG(recent.map(b => b.weight)));
+      chartWrap.style.cssText = 'margin-top:14px;';
+      bwCard.appendChild(chartWrap);
+      const first = bodyweightLogs[0], latest = bodyweightLogs[bodyweightLogs.length - 1];
+      const change = Math.round((latest.weight - first.weight) * 10) / 10;
+      const statsRow = el('div');
+      statsRow.style.cssText = 'margin-top:10px; display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px;';
+      statsRow.innerHTML = `
+        <div><div class="entry-detail">CURRENT</div><div class="entry-ex">${latest.weight} ${latest.unit}</div></div>
+        <div><div class="entry-detail">STARTING</div><div class="entry-ex">${first.weight} ${first.unit}</div></div>
+        <div><div class="entry-detail">CHANGE</div><div class="entry-ex">${change >= 0 ? '+' : ''}${change} ${latest.unit}</div></div>
+      `;
+      bwCard.appendChild(statsRow);
+      const delBwBtn = el('button', null, 'Delete today\'s entry');
+      delBwBtn.style.cssText = 'background:none; border:none; color:var(--danger); font-size:11px; text-decoration:underline; margin-top:10px; padding:0;';
+      const todayBw = bodyweightLogs.find(b => b.date === todayStr());
+      if (todayBw) {
+        delBwBtn.onclick = () => deleteBodyweight(todayBw.id);
+        bwCard.appendChild(delBwBtn);
+      }
+    } else {
+      bwCard.appendChild(el('div', 'empty-state', 'Log your weight to start tracking your trend.'));
+    }
+    app.appendChild(bwCard);
+
+    // Consistency heatmap
+    const heatCard = el('div', 'card');
+    heatCard.appendChild(el('h2', null, 'CONSISTENCY'));
+    const heatDays = 70;
+    const heatData = [];
+    for (let i = heatDays - 1; i >= 0; i--) {
+      const d = new Date(Date.now() - i * DAY_MS);
+      const key = localDateStr(d);
+      const vol = entries.filter(e => e.date === key).reduce((s, e) => s + e.volume, 0);
+      heatData.push({ date: key, vol });
+    }
+    const maxHeatVol = Math.max(...heatData.map(d => d.vol), 1);
+    const heatGrid = el('div');
+    heatGrid.style.cssText = 'display:grid; grid-template-rows:repeat(7,1fr); grid-auto-flow:column; gap:3px; width:100%; aspect-ratio:10/0.8;';
+    heatData.forEach(d => {
+      const cell = document.createElement('div');
+      const opacity = d.vol > 0 ? Math.max(0.25, d.vol / maxHeatVol) : 0;
+      cell.style.cssText = `aspect-ratio:1; border-radius:2px; background:${d.vol > 0 ? `rgba(242,169,59,${opacity})` : 'var(--surface-alt)'};`;
+      cell.title = `${d.date}: ${Math.round(d.vol)} vol`;
+      heatGrid.appendChild(cell);
+    });
+    heatCard.appendChild(heatGrid);
+    heatCard.appendChild(el('div', 'date-line', 'Last 10 weeks — darker means more training volume that day'));
+    app.appendChild(heatCard);
+
     const pastEntries = entries.filter(e => e.date !== todayStr());
     if (pastEntries.length) {
       const histCard = el('div', 'card');
@@ -1502,11 +1910,37 @@
     }
 
     const footer = el('div', 'footer-note');
+    const exportBtn = el('button', null, 'Export CSV');
+    exportBtn.style.cssText = 'background:none; border:none; color:var(--accent); font-size:11px; text-decoration:underline; padding:0;';
+    exportBtn.onclick = exportCSV;
     const clearBtn = el('button', null, 'Clear all data');
     clearBtn.onclick = () => { if (confirm('Delete all logged sets? This cannot be undone.')) clearAll(); };
     footer.appendChild(document.createTextNode('Synced to your account. '));
+    footer.appendChild(exportBtn);
+    footer.appendChild(document.createTextNode(' · '));
     footer.appendChild(clearBtn);
     app.appendChild(footer);
+  }
+
+  function exportCSV() {
+    const header = ['date', 'exercise', 'weight', 'unit', 'reps', 'sets', 'volume', 'result', 'note'];
+    const rows = entries.slice().sort((a, b) => a.date.localeCompare(b.date)).map(e => [
+      e.date, e.exercise, e.weight, e.unit, e.reps, e.sets, e.volume,
+      e.success === false ? 'missed' : e.success === true ? 'success' : '',
+      e.note || ''
+    ]);
+    const csv = [header, ...rows]
+      .map(r => r.map(x => `"${String(x).replace(/"/g, '""')}"`).join(','))
+      .join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `workout-history-${todayStr()}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   }
 
   function renderEntryRow(e) {
@@ -1518,8 +1952,19 @@
       const badge = el('span', 'pr-badge', 'PR');
       exLine.appendChild(badge);
     }
+    if (e.success === false) {
+      const badge = el('span', 'pr-badge', '✗ MISSED');
+      badge.style.background = 'rgba(226,87,76,0.15)';
+      badge.style.color = 'var(--danger)';
+      exLine.appendChild(badge);
+    }
     main.appendChild(exLine);
     main.appendChild(el('div', 'entry-detail', `${e.weight} ${e.unit} × ${e.reps} reps × ${e.sets} set${e.sets > 1 ? 's' : ''}`));
+    if (e.note) {
+      const noteLine = el('div', 'entry-detail', `"${e.note}"`);
+      noteLine.style.fontStyle = 'italic';
+      main.appendChild(noteLine);
+    }
     row.appendChild(main);
 
     const right = el('div', 'entry-right');
@@ -1538,11 +1983,13 @@
       document.getElementById('app').innerHTML = '<div class="loading">Loading your log…</div>';
       await loadEntries();
       await loadPlan();
+      await loadBodyweight();
       render();
     }
   }
 
   (async function init() {
+    loadTheme();
     loadPrefs();
     loadPlateEquipment();
     const { data } = await sb.auth.getSession();
